@@ -1,0 +1,166 @@
+# Reference: https://nura.eco/devicepkg
+maintainer="Michael McAllister <me@michaelmcallister.org>"
+pkgname=device-motorola-capri
+pkgver=1
+pkgrel=0
+pkgdesc="Motorola Moto G10"
+url="https://nura.eco"
+license="MIT AND BSD-3-Clause"
+arch="aarch64"
+options="!check !archcheck"
+depends="
+	alsa-ucm-conf>=1.2.16.1-r1
+	bluez-btmgmt
+	boot-deploy>=0.25.0-r1
+	firmware-motorola-capri
+	glib
+	hexagonrpcd>=0.4.0
+	iio-sensor-proxy>=3.9-r3
+	kmod
+	libssc>=0.4.4-r1
+	linux-motorola-capri
+	android-tools-mkbootimg
+	postmarketos-base
+	postmarketos-mkinitfs>=2.12.0-r1
+	python3
+	qbootctl
+	rmtfs
+	swclock-offset>=0.3.0-r1
+	tqftpserv
+"
+depends_openrc="
+	$pkgname=$pkgver-r$pkgrel
+	openrc
+	postmarketos-base-openrc
+	hexagonrpcd-openrc
+	iio-sensor-proxy-openrc
+	rmtfs-openrc
+	msm-firmware-loader-openrc
+	swclock-offset-openrc
+	tqftpserv-openrc
+	qbootctl-openrc
+"
+depends_systemd="
+	$pkgname=$pkgver-r$pkgrel
+	postmarketos-base-systemd>=92-r1
+	hexagonrpcd-systemd
+	iio-sensor-proxy-systemd
+	qbootctl-systemd
+	rmtfs-systemd
+	msm-firmware-loader-systemd
+	swclock-offset-systemd
+	tqftpserv-systemd
+"
+makedepends="devicepkg-dev"
+install="$pkgname-openrc.post-install $pkgname-openrc.post-upgrade"
+subpackages="
+	$pkgname-doc
+	$pkgname-openrc
+	$pkgname-phosh
+	$pkgname-systemd
+	$pkgname-udev
+"
+source="
+	deviceinfo
+	kernel-cmdline.conf
+	modprobe.conf
+	firmware.files
+	81-libssc-motorola-capri.rules
+	99-capri-mainline-input.rules
+	capri-bluetooth
+	capri-bluetooth.initd
+	capri-hardware
+	capri-hardware.initd
+	capri-watchdog.initd
+	rmtfs.confd
+	hexagonrpcd-adsp-sensorspd.confd
+	iio-sensor-proxy.confd
+	50-capri.gschema.override
+	phoc.ini
+	capri-hardware.service
+	capri-bluetooth.service
+	rmtfs-systemd.conf
+	hexagonrpcd-systemd.conf
+	iio-sensor-proxy-systemd.conf
+	watchdog-systemd.conf
+	80-device-motorola-capri.preset
+	README.md
+	firmware.md
+"
+
+build() {
+	devicepkg_build "$startdir" "$pkgname"
+}
+
+package() {
+	devicepkg_package "$startdir" "$pkgname"
+	install -Dm644 "$srcdir"/firmware.files \
+		"$pkgdir"/usr/share/mkinitfs/files/20-capri-firmware.files
+	for name in capri-hardware capri-bluetooth; do
+		install -Dm755 "$srcdir/$name" "$pkgdir/usr/libexec/$name"
+	done
+	for name in capri-hardware capri-bluetooth capri-watchdog; do
+		install -Dm755 "$srcdir/$name.initd" "$pkgdir/etc/init.d/$name"
+	done
+	for name in rmtfs hexagonrpcd-adsp-sensorspd iio-sensor-proxy; do
+		install -Dm644 "$srcdir/$name.confd" "$pkgdir/etc/conf.d/$name"
+	done
+	install -Dm644 "$srcdir"/capri-hardware.service "$srcdir"/capri-bluetooth.service \
+		-t "$pkgdir"/usr/lib/systemd/system
+	for name in rmtfs iio-sensor-proxy; do
+		install -Dm644 "$srcdir/$name-systemd.conf" \
+			"$pkgdir/usr/lib/systemd/system/$name.service.d/motorola-capri.conf"
+	done
+	install -Dm644 "$srcdir"/hexagonrpcd-systemd.conf \
+		"$pkgdir"/usr/lib/systemd/system/hexagonrpcd-adsp-sensorspd.service.d/motorola-capri.conf
+	install -Dm644 "$srcdir"/watchdog-systemd.conf \
+		"$pkgdir"/usr/lib/systemd/system.conf.d/50-motorola-capri.conf
+	install -Dm644 "$srcdir"/80-device-motorola-capri.preset \
+		-t "$pkgdir"/usr/lib/systemd/system-preset
+	install -Dm644 "$srcdir"/*.rules -t "$pkgdir"/usr/lib/udev/rules.d
+	install -Dm644 "$srcdir"/README.md "$srcdir"/firmware.md \
+		-t "$pkgdir/usr/share/doc/$pkgname"
+}
+
+openrc() {
+	replaces="rmtfs-openrc hexagonrpcd-openrc iio-sensor-proxy-openrc"
+	default_openrc
+}
+
+phosh() {
+	pkgdesc="Phosh hardware defaults for Motorola Moto G10"
+	depends="$pkgname=$pkgver-r$pkgrel"
+	install_if="$pkgname=$pkgver-r$pkgrel postmarketos-ui-phosh"
+	replaces="phosh"
+	install -Dm644 "$srcdir"/phoc.ini "$subpkgdir"/usr/share/phosh/phoc.ini
+	install -Dm644 "$srcdir"/50-capri.gschema.override \
+		"$subpkgdir"/usr/share/glib-2.0/schemas/50-capri.gschema.override
+}
+
+sha512sums="
+7131ffb6b22a3bf712433f68b97654b3d26eb8c77b298084a125b21334f6b58826f58dafa52894b460cc8eb79af14144665eaa36826c0537200dcb678d972541  deviceinfo
+16aba6959eaeb244f02ecde309887c12dd23baec4e6ec5c06b62a3e54687c4d0a79ac881249155098a8e58273aba3467b1b866253bcbc2b6c8d3b0fbc054131e  kernel-cmdline.conf
+04016cc269e93596b20d7b4f19eb54f030d218d9ba1f2be6de0fcf9ad0066c190256fe508d02e34461d4854cb21ed508d7f9e72250f4dbb40dc1bf3fe4b8f918  modprobe.conf
+061544f6f0709085c5167e5dc457101f7ce4b3deb3bd87b4cc383a6af04bc8b8bed6d20b68b3161ad7e7155a81f7a13c244138ed8332dff38da0f0661b905b70  firmware.files
+66cbb860906712202b65513a690f10c034ba84f5ca311dc41d4fc2783fcf405f53f505d2e2b4a090205069fec7bbfb615f9bf366093299a2745ba007a09359bb  81-libssc-motorola-capri.rules
+a52d9c3844ad13c8373d3fb6225a797403f8c72b8e253801584f6cdd4479f0c011561aec41acaef246441c013b08578177f8148a501ff3c8263351ee70ddedb5  99-capri-mainline-input.rules
+e23763e6256c45ca344ed90c086601ea3b305370771683bf697c0b4fefc38c385aa2ca0d48eca715caf006eb4696ccc55ea8d8b087cc5f00a9bb2f715ac29c04  capri-bluetooth
+cac1d4a979b88cb3d2af90a3cad2f2d100f1d6cacf847b2774473af7346775958fc6176709b45f85f7b6999fc085b3aa56b4dacf156c0577c5a0b48b7df4ca6c  capri-bluetooth.initd
+93b76563d6a86a85b38931291b3fc2775e2c0fab301db930409005a7f81e91a0a34a895fdea1e23b755c8e187e3fff76a0e62a2186d6b4377a6bf1c4ffb91827  capri-hardware
+fd1953fb8f9dcba7bf458573b48e867e2282be2c659b47c88a159cb4b93fdaf4775f252919257342f36aea0f8e8ba4695bf509b9458e0b4fff17c49d57ed7377  capri-hardware.initd
+a951d9a37758540bd84a9eb2f958fcfceac16a0a30501c066733f1cd5deb9296e962aff4329739ce8b689f49e898a16b8c45a3740d3d5c760073af33230ed59e  capri-watchdog.initd
+c10b239bd3f2a660ab39b8cda0e2acf68c7e1e9efb3d7bff43fc3632deaa0e4c33efb8382a63e3d2f808e8131042f4adf796ae08d091a6a6295486c0cf3c4183  rmtfs.confd
+c0fe55bdc48296edfd57fc595ec93e150bfcada080dd18ccb8a6fa49b8552c41ff744b50ddf102f59a98f1d89e4cfed0e4567ee0a65fe35fdec866be1cb30005  hexagonrpcd-adsp-sensorspd.confd
+0872cbfa2335fcf868515cc0f24c008b0b260e74798788e2d1bb45d8bea220308026c5a89494c5d25fb1a28cbc53f3b4050e7ead594858e771826fdd88f47f72  iio-sensor-proxy.confd
+bfbe547d4807de00fbe3e1060040d2e2729d91d42434cd283f9ce8a796cfedbc3271ca603cef5c074b4fb0f45211536921d7d6a540cfbd3a09c70295447aed67  50-capri.gschema.override
+f839cbcffaae29d7787b8829378fdc57f95dfb26707f584ddfd4212e8067b198ac405982250a0dc8dbd88570811f44881db735fe136edb868cdd3f054946ef2d  phoc.ini
+e31bbfc13fdedc77dad50371f6db4149f591955fc2f3df607d87c6fc0a8ff1f3d74de65cc064ae04d4f76f3cc6e1e818141be07f96b7950777bb173b18991d09  capri-hardware.service
+c0c78b901431e3ef8f46a28b77597775dd17b231abc43b4b62a1515f3e361c72e5c26829655f4e6459172d8a9b096c3cc2f7dcb44fddeed0d4d295b03444f1f2  capri-bluetooth.service
+80d9e39e9dd4e8c41b845ae7b631d113573d2571f7b4564ffd3980e0486d52c03331f36f2670d577ebdf4ad3400da35ed51a8c226938e3b64e2148f8afcbe9aa  rmtfs-systemd.conf
+865adac86a5be3afa606da10f393edea58dee318f4c9a8e302f04fbe02f6667498f48e946c0bd86e6d9abc58edbea6d93f49435063444e807b2bd54135c310a7  hexagonrpcd-systemd.conf
+7b00e50a515caeddd902f31f6de442a7699d2545c67fc1450397b9551861b6f441ad9cc4d7448509eac5039c3c9fe3c42e7c82e3f6e00e29bbd992916b094ef1  iio-sensor-proxy-systemd.conf
+52de7df680cb335345cf51b65ccf755813f33e7b7f8e445f8c1e988bca4051560d553a1ebb9560ff8f9aa0ce714a95b133c259758d5416e54de1f77ceff82fa7  watchdog-systemd.conf
+a58ba86e27eb381f8c17170cb1dcc59abeb6ddfdf4fcbf674816ed2e212a3502b28d0965c5c310f10e22017d8612882c69326fd11de9177f72d775ef46a059f6  80-device-motorola-capri.preset
+d9c481cd8d1b1057263f9965a996f5a570256487270adcd11e37a68f0a2a8f0e92edc78a6c2cd8b9749424bf0abf57cc98ecfcfb7cbe724c41eb37e8fd0c79e2  README.md
+31d89dfbadb0892b6d96bb299cb6507cb98b5a161f265f6cb0771a8bd8f750de55f02181850b1dfd2c8873e910a6b5a31a330ba13dc25f28c01c07e7cc77d0be  firmware.md
+"

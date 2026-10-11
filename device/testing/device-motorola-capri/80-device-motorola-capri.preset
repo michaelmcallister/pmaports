@@ -1,0 +1,12 @@
+enable msm-firmware-loader.service
+enable capri-hardware.service
+enable capri-bluetooth.service
+enable rmtfs.service
+disable rmtfs-ro.service
+enable tqftpserv.service
+enable hexagonrpcd-adsp-sensorspd.service
+disable hexagonrpcd-adsp-rootpd.service
+disable hexagonrpcd-sdsp.service
+enable swclock-offset-boot.service
+enable swclock-offset-shutdown.service
+enable qbootctl.service

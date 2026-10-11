@@ -1,0 +1,11 @@
+# Read-only copies of this handset's sensor registry and vendor configuration.
+hexagonrpcd_fw_dir="/run/msm-firmware-loader/target/qcom"
+rc_need="capri-hardware"
+output_log="/var/log/capri-sensors/hexagonrpcd.log"
+error_log="$output_log"
+
+start_pre() {
+	checkpath --directory --mode 0750 --owner fastrpc:fastrpc /var/log/capri-sensors
+	checkpath --file --mode 0640 --owner fastrpc:fastrpc "$output_log"
+	test -c /dev/fastrpc-adsp
+}

@@ -1,0 +1,14 @@
+[Unit]
+Description=Initialize Motorola Moto G10 modem, Wi-Fi and audio
+Requires=rmtfs.service tqftpserv.service msm-firmware-loader.service
+After=msm-firmware-loader.service systemd-modules-load.service systemd-udev-trigger.service rmtfs.service tqftpserv.service
+Before=NetworkManager.service alsa-restore.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/capri-hardware
+RemainAfterExit=yes
+TimeoutStartSec=90
+
+[Install]
+WantedBy=multi-user.target

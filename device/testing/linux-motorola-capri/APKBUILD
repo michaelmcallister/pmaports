@@ -1,0 +1,72 @@
+maintainer="Michael McAllister <me@michaelmcallister.org>"
+pkgname=linux-motorola-capri
+pkgver=7.2.9
+pkgrel=0
+pkgdesc="Linux kernel for Motorola Moto G10"
+arch="aarch64"
+_carch="arm64"
+_flavor="motorola-capri"
+url="https://github.com/michaelmcallister/linux-motorola-capri"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps pmb:cross-native"
+makedepends="
+	bash
+	bc
+	bison
+	clang
+	elfutils-dev
+	flex
+	kmod
+	lld
+	llvm
+	openssl-dev
+	pahole
+	perl
+	python3
+	zstd
+"
+_commit="66b1ded76c441a39d0d73c36c9175bc74e09e5c8"
+_config="config-$_flavor.$arch"
+source="
+	$pkgname-$_commit.tar.gz::$url/archive/$_commit.tar.gz
+	$_config
+"
+builddir="$srcdir/$pkgname-$_commit"
+
+prepare() {
+	default_prepare
+	mkdir -p out
+	cp "$srcdir/$_config" out/.config
+	# GitHub source archives have no SCM suffix.
+	touch .scmversion
+	make O=out ARCH="$_carch" LLVM=1 olddefconfig
+}
+
+build() {
+	unset LDFLAGS
+	make O=out ARCH="$_carch" LLVM=1 qcom/sm4250-motorola-capri.dtb
+	python3 scripts/capri/embed-dtb.py \
+		out/arch/arm64/boot/dts/qcom/sm4250-motorola-capri.dtb \
+		out/include/generated/capri-dtb.h
+	make O=out ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1))-$_flavor" Image modules
+	python3 scripts/capri/wrap-image.py out/arch/arm64/boot/Image out/Image.capri
+}
+
+package() {
+	install -Dm644 out/Image.capri "$pkgdir/boot/vmlinuz"
+	install -Dm644 out/.config "$pkgdir/boot/config"
+	install -Dm644 out/System.map "$pkgdir/boot/System.map"
+	install -Dm644 out/arch/arm64/boot/dts/qcom/sm4250-motorola-capri.dtb \
+		"$pkgdir/boot/dtbs/qcom/sm4250-motorola-capri.dtb"
+	make O=out ARCH="$_carch" LLVM=1 INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 modules_install
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+	install -Dm644 out/include/config/kernel.release \
+		"$pkgdir/usr/share/kernel/$_flavor/kernel.release"
+}
+
+sha512sums="
+62248c8868c94f2d85b6943359ca003ad6a828a59749876cd242fd0cd278fc9c2d179e67717fc8956c417bf60f1ceb24ccc59924df3775901ca86680bd6008f7  linux-motorola-capri-66b1ded76c441a39d0d73c36c9175bc74e09e5c8.tar.gz
+4c7bdc20168aa97a39d2c1127a6390db89e2a74bbe33542b1aaf3f97eaca35876995b065c05a66c8d6915b355d20396df2e1191dee6e52d6a354fa9ef6d4401d  config-motorola-capri.aarch64
+"

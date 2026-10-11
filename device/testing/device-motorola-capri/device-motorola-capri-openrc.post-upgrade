@@ -1,0 +1,9 @@
+#!/bin/sh
+
+rc-update -q add capri-hardware default
+rc-update -q add capri-watchdog default
+rc-update -q add capri-bluetooth default
+rc-update -q add qbootctl default
+rc-update -q add hexagonrpcd-adsp-sensorspd default
+rc-update -q add iio-sensor-proxy default
+exit 0

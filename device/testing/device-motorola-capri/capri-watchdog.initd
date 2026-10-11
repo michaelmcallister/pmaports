@@ -1,0 +1,9 @@
+#!/sbin/openrc-run
+description="Feed the Moto G10 hardware watchdog"
+command="/sbin/watchdog"
+command_args="-F -t 5 -T 30 /dev/watchdog0"
+command_background=true
+pidfile="/run/capri-watchdog.pid"
+depend() {
+	need localmount
+}

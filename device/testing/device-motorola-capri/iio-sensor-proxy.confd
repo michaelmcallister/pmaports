@@ -1,0 +1,2 @@
+# The SSC registry must be served before sensor discovery.
+rc_need="hexagonrpcd-adsp-sensorspd"

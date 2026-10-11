@@ -1,0 +1,13 @@
+#!/sbin/openrc-run
+name="Capri Bluetooth controller"
+description="Initialize WCN3950 after shared WLAN power and restore factory identity"
+depend() {
+	need capri-hardware
+	after rfkill
+	before bluetooth
+}
+start() {
+	ebegin "Initializing Capri Bluetooth"
+	/usr/libexec/capri-bluetooth
+	eend $?
+}

@@ -3,7 +3,7 @@
 maintainer="Oliver Smith <ollieparanoid@postmarketos.org>"
 pkgname=postmarketos-mkinitfs
 pkgver=2.12.0
-pkgrel=0
+pkgrel=1
 pkgdesc="Tool to generate initramfs images for postmarketOS"
 url="https://gitlab.postmarketos.org/postmarketOS/postmarketos-mkinitfs"
 depends="
@@ -28,6 +28,7 @@ triggers="$pkgname.trigger=\
 # mkinitfs-vendor-$pkgver.tar.gz: vendored Go deps, is part of the release:
 # https://gitlab.postmarketos.org/postmarketOS/postmarketos-mkinitfs/-/releases
 source="
+	0001-preserve-stock-vendor-boot.patch
 	https://gitlab.postmarketos.org/postmarketOS/postmarketos-mkinitfs/-/archive/$pkgver/postmarketos-mkinitfs-$pkgver.tar.gz
 	https://gitlab.postmarketos.org/api/v4/projects/postmarketOS%2Fpostmarketos-mkinitfs/packages/generic/mkinitfs-vendor-$pkgver/$pkgver/mkinitfs-vendor-$pkgver.tar.gz
 	"
@@ -75,6 +76,7 @@ check() {
 }
 
 sha512sums="
+e81590e9355316ddf39f0b9b5f8fd3a90bf00f6811524148b548a71b6d4f18f486718b690ee863d536d0eb5562dc5ade1aa09a2ef23b9e92692e417165c7642f  0001-preserve-stock-vendor-boot.patch
 9b7d0888986e3f61174ea7ccb5c39e65db28cac788c7e147ef943094dca15d5d4c782076195f759097e6f5b29367c11436b1203e2335a85f9efd16f8f7d12845  postmarketos-mkinitfs-2.12.0.tar.gz
 46f000c9fbccea20f09c270ad1c06e34aa95f071a498e3b19c51257861a7bd2cdb83d3a8a3b0065bdf45b13923fa151b236079f149a9816059626061eea0a95a  mkinitfs-vendor-2.12.0.tar.gz
 "

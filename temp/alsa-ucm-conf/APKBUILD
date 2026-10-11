@@ -1,0 +1,29 @@
+# Forked from Alpine to add the Motorola Moto G10 speaker profile.
+# Contributor: Minecrell <minecrell@minecrell.net>
+maintainer="Michael McAllister <me@michaelmcallister.org>"
+pkgname=alsa-ucm-conf
+pkgver=1.2.16.1
+pkgrel=1
+pkgdesc="ALSA Use Case Manager configuration"
+url="https://alsa-project.org"
+arch="noarch"
+license="BSD-3-Clause"
+source="
+	https://alsa-project.org/files/pub/lib/alsa-ucm-conf-$pkgver.tar.bz2
+	0001-Qualcomm-add-Motorola-Moto-G10-speaker-configuration.patch
+	"
+options="!check" # no tests
+provider_priority=10
+# replaced files from downstream pmos
+replaces="device-purism-librem5"
+
+package() {
+	mkdir -p "$pkgdir"/usr/share/alsa
+	cp -r ucm2 "$pkgdir"/usr/share/alsa
+	find "$pkgdir"/usr/share/alsa \( -name '*.md' -o -name '.gitignore' \) -delete
+}
+
+sha512sums="
+df25a29afc3b87347fa89f3fe60ebda68068acdaf68e081b58455ebee319c21e82af4076ba1f10781ba620a9e8efa6e65db27c5989d63a429d44a715dbd1d460  alsa-ucm-conf-1.2.16.1.tar.bz2
+3e37dcae5d97fd803e75bfceda00f0a932534be33b7e7ba618ec8fec84f74814c2bb15c466cb0b3febdbc4bce3488bbbc701a9136a973bb571061fd3481fea02  0001-Qualcomm-add-Motorola-Moto-G10-speaker-configuration.patch
+"

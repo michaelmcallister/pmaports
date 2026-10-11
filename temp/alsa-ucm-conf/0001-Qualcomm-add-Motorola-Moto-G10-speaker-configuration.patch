@@ -1,0 +1,75 @@
+From ed48a8fe11cf782695dc2bf2b6ba60a1b5c88ca9 Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Sun, 11 Oct 2026 19:58:46 +0100
+Subject: [PATCH] Qualcomm: add Motorola Moto G10 speaker configuration
+
+Route multimedia playback through the primary MI2S link to the AW88261 amplifier. Provide the speaker controls used by PulseAudio and PipeWire.
+
+Assisted-by: OpenAI GPT-6
+Signed-off-by: Michael McAllister <me@michaelmcallister.org>
+---
+ .../sm6115/Motorola-Moto-G10-HiFi.conf        | 22 +++++++++++++++++++
+ ucm2/Qualcomm/sm6115/Motorola-Moto-G10.conf   | 12 ++++++++++
+ .../conf.d/capri-mainline/capri-mainline.conf |  1 +
+ 3 files changed, 35 insertions(+)
+ create mode 100644 ucm2/Qualcomm/sm6115/Motorola-Moto-G10-HiFi.conf
+ create mode 100644 ucm2/Qualcomm/sm6115/Motorola-Moto-G10.conf
+ create mode 120000 ucm2/conf.d/capri-mainline/capri-mainline.conf
+
+diff --git a/ucm2/Qualcomm/sm6115/Motorola-Moto-G10-HiFi.conf b/ucm2/Qualcomm/sm6115/Motorola-Moto-G10-HiFi.conf
+new file mode 100644
+index 0000000..cf28473
+--- /dev/null
++++ b/ucm2/Qualcomm/sm6115/Motorola-Moto-G10-HiFi.conf
+@@ -0,0 +1,22 @@
++# SPDX-License-Identifier: BSD-3-Clause
++SectionVerb {
++	EnableSequence [
++		cset "name='PRI_MI2S_RX Audio Mixer MultiMedia1' 1"
++	]
++	DisableSequence [
++		cset "name='PRI_MI2S_RX Audio Mixer MultiMedia1' 0"
++	]
++	Value { TQ "HiFi" }
++}
++
++SectionDevice."Speaker" {
++	Comment "Built-in speaker"
++	Value {
++		PlaybackPriority 100
++		PlaybackPCM "hw:${CardId},0"
++		PlaybackChannels 2
++		PlaybackRate 48000
++		PlaybackMixerElem "Speaker"
++		PlaybackVolume "Speaker Playback Volume"
++	}
++}
+diff --git a/ucm2/Qualcomm/sm6115/Motorola-Moto-G10.conf b/ucm2/Qualcomm/sm6115/Motorola-Moto-G10.conf
+new file mode 100644
+index 0000000..fae23a5
+--- /dev/null
++++ b/ucm2/Qualcomm/sm6115/Motorola-Moto-G10.conf
+@@ -0,0 +1,12 @@
++# SPDX-License-Identifier: BSD-3-Clause
++Syntax 4
++
++SectionUseCase."HiFi" {
++	File "/Qualcomm/sm6115/Motorola-Moto-G10-HiFi.conf"
++	Comment "Moto G10 speaker"
++}
++
++BootSequence [
++	cset "name='Speaker Playback Volume' 0"
++	cset "name='PRI_MI2S_RX Audio Mixer MultiMedia1' 0"
++]
+diff --git a/ucm2/conf.d/capri-mainline/capri-mainline.conf b/ucm2/conf.d/capri-mainline/capri-mainline.conf
+new file mode 120000
+index 0000000..79ff70f
+--- /dev/null
++++ b/ucm2/conf.d/capri-mainline/capri-mainline.conf
+@@ -0,0 +1 @@
++../../Qualcomm/sm6115/Motorola-Moto-G10.conf
+\ No newline at end of file
+-- 
+2.50.1 (Apple Git-155)
+

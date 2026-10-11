@@ -1,0 +1,61 @@
+# Forked from Alpine to handle sensors registered after the SSC registry becomes available.
+# Contributor: Dylan Van Assche <dylan@postmarketos.org>
+maintainer="Michael McAllister <me@michaelmcallister.org>"
+pkgname=libssc
+pkgver=0.4.4
+pkgrel=1
+pkgdesc="Library to expose Qualcomm Sensor Core sensors"
+url="https://codeberg.org/DylanVanAssche/libssc"
+arch="all"
+license="GPL-3.0-or-later"
+makedepends="
+	eudev-dev
+	glib-dev
+	libgudev-dev
+	linux-headers
+	libqmi-dev
+	meson
+	protobuf-c-dev
+	protobuf-dev
+	python3-dev
+	py3-gobject3
+	py3-protobuf
+	qrtr-libs
+"
+subpackages="$pkgname-dbg $pkgname-dev $pkgname-pyc"
+builddir="$srcdir/$pkgname"
+source="
+	$pkgname-$pkgver.tar.gz::https://codeberg.org/DylanVanAssche/libssc/archive/v$pkgver.tar.gz
+	0001-upstream-clear-signal-handler.patch
+	0002-upstream-discovery-timeout.patch
+	0003-propagate-test-exit-status.patch
+	0004-retry-sensor-discovery.patch
+"
+
+# Tests suddenly fail on s390x, disable them for now
+case "$CARCH" in
+	s390x) options="!check";;
+esac
+
+build() {
+	abuild-meson \
+		-Db_lto=true \
+		. output
+	meson compile -C output
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C output
+}
+
+check() {
+	meson test --print-errorlogs -C output
+}
+
+sha512sums="
+9240970f6a70f4900ef2d8fad337dac815ea2602b3b395943326fb086f59d24dcf59b76bdbc6014ebd3c450eaad5393465ca038c165845ffe99bf8e282a5c170  libssc-0.4.4.tar.gz
+0832bf739217bfa2304410d90b794f86576a400f5b1f4be568e837a5245fe818e20721b9ceb3c48a0cb7bfbd33404f6b2f05abfc73fc46a583f06f5fc54d0624  0001-upstream-clear-signal-handler.patch
+df3d84be26ad49a442d84bccea01c7c64e26279cdfc9a9c0647fee01149cb40794b9ff4f428905581cfd754c196121a6a8d084acd352bc03b42cb9b55b105c17  0002-upstream-discovery-timeout.patch
+c26e50f39284638c3cef3e409c97dc89750b1a9d77392be6826ff56313f06c39c013bdfea7f1af8781de83b06368cf18a38f8952cad872e661466cd92f1070e2  0003-propagate-test-exit-status.patch
+11d659d67736edc9d7fbd8d53c99f3861a15887365cf80521029dff35413f3bcfde29e2ccb894ef6753634f0531e14ad2760662b4cff24fd39b133f6e702e4a8  0004-retry-sensor-discovery.patch
+"

@@ -1,0 +1,263 @@
+From 3c1b77b28b0ca939c8804e1be32dfea010e11651 Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Sun, 11 Oct 2026 20:37:12 +0100
+Subject: [PATCH] sensor: retry discovery while sensor registration is
+ incomplete
+
+The SSC registry can become available before individual sensors have registered. An empty SUID response during this interval makes the initial sensor probe fail permanently.
+
+Retry empty responses asynchronously for up to ten seconds. Cancel the pending retry when a sensor is found or discovery is cancelled, and retain a bounded failure for absent sensors. Add delayed-discovery and cancellation coverage to the mock service tests.
+
+Assisted-by: OpenAI GPT-6
+Signed-off-by: Michael McAllister <me@michaelmcallister.org>
+---
+ mocking/ssc_server/data/meson.build         |  3 +-
+ mocking/ssc_server/data/sensor-delayed.json | 31 +++++++++++++
+ mocking/ssc_server/ssc.py                   |  5 +-
+ src/libssc-sensor.c                         | 36 ++++++++++++++-
+ tests/general.c                             | 51 +++++++++++++++++++++
+ 5 files changed, 123 insertions(+), 3 deletions(-)
+ create mode 100644 mocking/ssc_server/data/sensor-delayed.json
+
+diff --git a/mocking/ssc_server/data/meson.build b/mocking/ssc_server/data/meson.build
+index 9b18af1..3ca0cf3 100644
+--- a/mocking/ssc_server/data/meson.build
++++ b/mocking/ssc_server/data/meson.build
+@@ -10,13 +10,14 @@ mocking_config_sources = files(
+   'sensor-light.json',
+   'sensor-no-sample-rate.json',
+   'sensor-registry.json',
++  'sensor-delayed.json',
+   'sensor-unavailable.json'
+ )
+ 
+ custom_target(
+   'copy-mocking-configure',
+   input: mocking_config_sources,
+-  output: ['sensor-accelerometer.json', 'sensor-magnetometer.json', 'sensor-proximity.json', 'sensor-rotationvector.json', 'sensor-light.json', 'sensor-no-sample-rate.json', 'sensor-registry.json', 'sensor-unavailable.json'],
++  output: ['sensor-accelerometer.json', 'sensor-magnetometer.json', 'sensor-proximity.json', 'sensor-rotationvector.json', 'sensor-light.json', 'sensor-no-sample-rate.json', 'sensor-registry.json', 'sensor-unavailable.json', 'sensor-delayed.json'],
+   command: ['cp', '@INPUT@', '@OUTDIR@'],
+   build_by_default: true
+ )
+diff --git a/mocking/ssc_server/data/sensor-delayed.json b/mocking/ssc_server/data/sensor-delayed.json
+new file mode 100644
+index 0000000..446cf41
+--- /dev/null
++++ b/mocking/ssc_server/data/sensor-delayed.json
+@@ -0,0 +1,31 @@
++{
++  "sensor": {
++    "data_type": "delayed",
++    "uid_high": "0x0000000000000008",
++    "uid_low": "0x0000000000000008",
++    "empty_discovery_responses": 2
++  },
++  "attributes": {
++    "name": {
++      "id": 0,
++      "value": "delayed-mock"
++    },
++    "vendor": {
++      "id": 1,
++      "value": "libssc"
++    },
++    "available": {
++      "id": 3,
++      "value": true
++    },
++    "sample_rate": {
++      "id": 6,
++      "value": 5.0
++    },
++    "stream_type": {
++      "id": 16,
++      "value": 1
++    }
++  },
++  "measurements": []
++}
+diff --git a/mocking/ssc_server/ssc.py b/mocking/ssc_server/ssc.py
+index fb7001c..4195e7b 100644
+--- a/mocking/ssc_server/ssc.py
++++ b/mocking/ssc_server/ssc.py
+@@ -85,6 +85,7 @@ class SSC():
+     """
+     Qualcomm's Snapdragon Sensor Core QMI messages.
+     """
++    _discovery_counts = {}
+ 
+     @staticmethod
+     def _read_data() -> dict:
+@@ -273,7 +274,9 @@ class SSC():
+             if sensor['data_type'] == data_type:
+                 uid_high = int(sensor['uid_high'], 16)
+                 uid_low = int(sensor['uid_low'], 16)
+-                supported = True
++                count = SSC._discovery_counts.get(data_type, 0)
++                SSC._discovery_counts[data_type] = count + 1
++                supported = count >= sensor.get('empty_discovery_responses', 0)
+                 break
+ 
+         # Generate discovery response 
+diff --git a/src/libssc-sensor.c b/src/libssc-sensor.c
+index 5947dba..286bd24 100644
+--- a/src/libssc-sensor.c
++++ b/src/libssc-sensor.c
+@@ -24,6 +24,7 @@
+ 
+ #define MAX_RETRIES 100
+ #define SENSOR_SERVICE_TIMEOUT_S 30
++#define SENSOR_DISCOVERY_RETRIES 10
+ 
+ enum {
+ 	PROP_NAME = 1,
+@@ -63,6 +64,8 @@ typedef struct _SSCSensorPrivate {
+ 	gboolean service_available;
+ 	guint service_retries;
+ 	guint discovery_timeout_id;
++	guint sensor_retry_id;
++	guint sensor_retries;
+ } SSCSensorPrivate;
+ 
+ static void async_initable_iface_init (GAsyncInitableIface *iface);
+@@ -273,6 +276,25 @@ ssc_sensor_open (SSCSensor *self, GCancellable *cancellable, GAsyncReadyCallback
+ 
+ /*****************************************************************************/
+ 
++/* The registry service can be available before it finishes registering
++ * individual sensors. Retry an empty UID response without blocking the main
++ * context, but keep discovery bounded for genuinely absent sensors. */
++static void
++retry_sensor_discovery (gpointer user_data)
++{
++	ReportReceivedContext *ctx = user_data;
++	SSCSensorPrivate *priv = ssc_sensor_get_instance_private (ctx->sensor);
++
++	priv->sensor_retry_id = 0;
++	if (g_task_return_error_if_cancelled (ctx->task)) {
++		g_clear_signal_handler (&priv->report_id, priv->client);
++		g_clear_object (&ctx->task);
++		g_slice_free (ReportReceivedContext, ctx);
++		return;
++	}
++	discover (ctx->sensor, ctx->task);
++}
++
+ static void
+ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_low, GArray *buf, gpointer user_data)
+ {
+@@ -343,6 +365,7 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 
+ 		/* Only default sensor for data type is reported */
+ 		if (suid_msg != NULL && suid_msg->n_uid > 0) {
++			g_clear_handle_id (&priv->sensor_retry_id, g_source_remove);
+ 			priv->uid_high = suid_msg->uid[0]->high;
+ 			priv->uid_low = suid_msg->uid[0]->low;
+ 
+@@ -355,8 +378,17 @@ report_received (SSCClient *self, guint32 msg_id, guint64 uid_high, guint64 uid_
+ 			return;
+ 		/* No sensor available for specified data type, complete task */
+ 		} else {
+-			g_debug ("No '%s' sensor available", priv->data_type);
+ 			ssc_suid_response__free_unpacked (suid_msg, NULL);
++			if (priv->sensor_retry_id)
++				return;
++			if (priv->sensor_retries++ < SENSOR_DISCOVERY_RETRIES) {
++				g_debug ("No '%s' sensor yet, retrying discovery (%u/%u)",
++					 priv->data_type, priv->sensor_retries, SENSOR_DISCOVERY_RETRIES);
++				priv->sensor_retry_id = g_timeout_add_seconds_once (1,
++									 retry_sensor_discovery, ctx);
++				return;
++			}
++			g_debug ("No '%s' sensor available", priv->data_type);
+ 
+ 			g_clear_signal_handler (&priv->report_id, self);
+ 			g_clear_handle_id (&priv->discovery_timeout_id, g_source_remove);
+@@ -713,6 +745,7 @@ client_ready (SSCClient *client, GAsyncResult *result, gpointer user_data)
+ 	/* Wait for sensor service before discovering sensor */
+ 	priv->service_available = FALSE;
+ 	priv->service_retries = 0;
++	priv->sensor_retries = 0;
+ 	priv->discovery_timeout_id = g_timeout_add_seconds_once (SENSOR_SERVICE_TIMEOUT_S,
+ 								 sensor_service_discovery_timeout,
+ 								 ctx);
+@@ -820,6 +853,7 @@ sensor_dispose (GObject *object)
+ 	SSCSensorPrivate *priv = ssc_sensor_get_instance_private (self);
+ 
+ 	g_clear_handle_id (&priv->discovery_timeout_id, g_source_remove);
++	g_clear_handle_id (&priv->sensor_retry_id, g_source_remove);
+ 
+ 	if (priv->name)
+ 		g_free (priv->name);
+diff --git a/tests/general.c b/tests/general.c
+index c8f1667..1596429 100644
+--- a/tests/general.c
++++ b/tests/general.c
+@@ -131,6 +131,55 @@ test_libssc_sensor_no_sample_rate (void)
+ 	g_main_loop_run (loop);
+ }
+ 
++static void
++sensor_delayed_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GError) error = NULL;
++	g_autoptr (SSCSensor) sensor = ssc_sensor_new_finish (result, &error);
++
++	g_assert_no_error (error);
++	g_assert_nonnull (sensor);
++	g_main_loop_quit (user_data);
++}
++
++static void
++test_libssc_sensor_delayed (void)
++{
++	g_autoptr (GMainLoop) loop = g_main_loop_new (NULL, FALSE);
++
++	ssc_sensor_new ("delayed", NULL, (GAsyncReadyCallback) sensor_delayed_ready, loop);
++	g_main_loop_run (loop);
++}
++
++static void
++sensor_cancelled_ready (GObject *source, GAsyncResult *result, gpointer user_data)
++{
++	g_autoptr (GError) error = NULL;
++	g_autoptr (SSCSensor) sensor = ssc_sensor_new_finish (result, &error);
++
++	g_assert_error (error, G_IO_ERROR, G_IO_ERROR_CANCELLED);
++	g_assert_null (sensor);
++	g_main_loop_quit (user_data);
++}
++
++static void
++cancel_discovery (gpointer user_data)
++{
++	g_cancellable_cancel (user_data);
++}
++
++static void
++test_libssc_sensor_cancelled (void)
++{
++	g_autoptr (GMainLoop) loop = g_main_loop_new (NULL, FALSE);
++	g_autoptr (GCancellable) cancellable = g_cancellable_new ();
++
++	ssc_sensor_new ("unsupported", cancellable,
++			(GAsyncReadyCallback) sensor_cancelled_ready, loop);
++	g_timeout_add_once (1500, cancel_discovery, cancellable);
++	g_main_loop_run (loop);
++}
++
+ int main (int argc, char *argv[])
+ {
+ 	GLogLevelFlags mask;
+@@ -146,6 +195,8 @@ int main (int argc, char *argv[])
+ 	g_log_set_always_fatal ((GLogLevelFlags) mask);
+ 
+ 	/* Tests */
++	g_test_add_func("/libssc/sensor/cancelled", test_libssc_sensor_cancelled);
++	g_test_add_func("/libssc/sensor/delayed", test_libssc_sensor_delayed);
+ 	g_test_add_func("/libssc/sensor/unsupported", test_libssc_sensor_unsupported);
+ 	g_test_add_func("/libssc/sensor/unavailable", test_libssc_sensor_unavailable);
+ 	g_test_add_func("/libssc/sensor/no-sample-rate", test_libssc_sensor_no_sample_rate);
+-- 
+2.50.1 (Apple Git-155)
+

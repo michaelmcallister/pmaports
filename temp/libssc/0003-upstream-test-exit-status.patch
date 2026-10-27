@@ -1,0 +1,29 @@
+From dff8073c7d5790a49e161d41262974aef2a84a31 Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Sun, 11 Oct 2026 20:37:12 +0100
+Subject: [PATCH] mocking: propagate the test process exit status
+
+os.system returns an encoded wait status. Passing it directly to sys.exit truncates a failed test status to zero, allowing assertion failures to pass the Meson test suite.
+
+Assisted-by: OpenAI GPT-6
+Signed-off-by: Michael McAllister <me@michaelmcallister.org>
+---
+ mocking/ssc_server/ssc-server.in | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/mocking/ssc_server/ssc-server.in b/mocking/ssc_server/ssc-server.in
+index 07a973d..ec3779b 100755
+--- a/mocking/ssc_server/ssc-server.in
++++ b/mocking/ssc_server/ssc-server.in
+@@ -328,7 +328,7 @@ if __name__ == '__main__':
+             p.start()
+ 
+         code = ERROR_OK
+-        code = os.system(args.test)
++        code = os.waitstatus_to_exitcode(os.system(args.test))
+         if code != 0:
+             print(f'❌ Test {args.test} finished with exit code {code}')
+ 
+-- 
+2.50.1 (Apple Git-155)
+

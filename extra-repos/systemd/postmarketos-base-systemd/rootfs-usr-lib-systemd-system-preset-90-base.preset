@@ -14,6 +14,7 @@ enable apk-inhibit.path
 ## system services
 enable ModemManager.service
 enable NetworkManager.service
+enable NetworkManager-dispatcher.service
 enable NetworkManager-wait-online.service
 enable apk-polkit-server.service
 enable bluetooth.service

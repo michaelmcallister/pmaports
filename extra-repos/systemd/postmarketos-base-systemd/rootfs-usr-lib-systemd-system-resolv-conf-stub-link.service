@@ -1,9 +1,11 @@
 [Unit]
 Description=Migrate /etc/resolv.conf to the systemd-resolved stub
 Documentation=man:systemd-resolved.service(8)
+DefaultDependencies=no
+After=local-fs.target
 ConditionPathIsSymbolicLink=!/etc/resolv.conf
 Wants=network-pre.target
-Before=network-pre.target
+Before=network-pre.target systemd-resolved.service
 
 [Service]
 Type=oneshot

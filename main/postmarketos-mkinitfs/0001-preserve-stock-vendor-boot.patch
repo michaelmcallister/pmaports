@@ -1,0 +1,278 @@
+From 0fd83f769c2798e6917f7ef86178722bca477f02 Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Sun, 11 Oct 2026 19:39:14 +0100
+Subject: [PATCH] archive: support initramfs overlays on a stock vendor ramdisk
+
+A vendor ramdisk may populate lib/modules before the distribution
+initramfs is unpacked. Linux cannot replace a populated directory with
+a usr-merge symlink, leaving the dynamic loader unavailable at /lib.
+
+When deviceinfo_bootimg_preserve_vendor_boot is enabled, materialize the
+usr-merge directory aliases in both initramfs archives. Keep the default
+archive layout unchanged for other devices.
+
+Assisted-by: LLM
+---
+ cmd/mkinitfs/main.go                    |  6 ++
+ internal/archive/archive.go             | 54 +++++++++++++--
+ internal/archive/vendor_ramdisk_test.go | 87 +++++++++++++++++++++++++
+ pkgs/deviceinfo/deviceinfo.go           | 11 ++--
+ pkgs/deviceinfo/deviceinfo_test.go      | 19 ++++++
+ 5 files changed, 166 insertions(+), 11 deletions(-)
+ create mode 100644 internal/archive/vendor_ramdisk_test.go
+
+diff --git a/cmd/mkinitfs/main.go b/cmd/mkinitfs/main.go
+index 68732c8..9de880c 100644
+--- a/cmd/mkinitfs/main.go
++++ b/cmd/mkinitfs/main.go
+@@ -153,6 +153,9 @@ func main() {
+ 		}
+ 	}
+ 
++	if devinfo.BootimgPreserveVendorBoot {
++		initramfsAr.ExpandUsrMergeAliases()
++	}
+ 	if err := initramfsAr.Write(filepath.Join(workDir, "initramfs"), os.FileMode(0644)); err != nil {
+ 		log.Println(err)
+ 		log.Println("failed to generate: ", "initramfs")
+@@ -178,6 +181,9 @@ func main() {
+ 			retCode = 1
+ 			return
+ 		}
++		if devinfo.BootimgPreserveVendorBoot {
++			initramfsExtraAr.ExpandUsrMergeAliases()
++		}
+ 		if err := initramfsExtraAr.Write(filepath.Join(workDir, "initramfs-extra"), os.FileMode(0644)); err != nil {
+ 			log.Println(err)
+ 			log.Println("failed to generate: ", "initramfs-extra")
+diff --git a/internal/archive/archive.go b/internal/archive/archive.go
+index 088ce17..98996ad 100644
+--- a/internal/archive/archive.go
++++ b/internal/archive/archive.go
+@@ -54,6 +54,13 @@ type Archive struct {
+ 	destPrefixes    map[string]string
+ }
+ 
++var usrMergeLinks = []struct{ name, target string }{
++	{"bin", "usr/bin"},
++	{"sbin", "usr/bin"},
++	{"lib", "usr/lib"},
++	{"usr/sbin", "bin"},
++}
++
+ func New(format CompressFormat, level CompressLevel) *Archive {
+ 	buf := new(bytes.Buffer)
+ 	archive := &Archive{
+@@ -72,12 +79,7 @@ func New(format CompressFormat, level CompressLevel) *Archive {
+ 
+ 	// Add usr-merged symlinks first
+ 	archive.addDir("usr")
+-	for _, s := range []struct{ name, target string }{
+-		{"bin", "usr/bin"},
+-		{"sbin", "usr/bin"},
+-		{"lib", "usr/lib"},
+-		{"usr/sbin", "bin"},
+-	} {
++	for _, s := range usrMergeLinks {
+ 		archive.items.add(archiveItem{
+ 			header: &cpio.Header{
+ 				Name:     s.name,
+@@ -90,6 +92,46 @@ func New(format CompressFormat, level CompressLevel) *Archive {
+ 	return archive
+ }
+ 
++// ExpandUsrMergeAliases replaces the top-level usr-merge symlinks with copies
++// of their target directories. A bootloader may prepend a vendor ramdisk that
++// already contains e.g. lib/modules. Linux cannot replace a non-empty directory
++// with a symlink when unpacking our archive, leaving the dynamic loader missing
++// from /lib. Keep the canonical /usr paths and provide the legacy paths too.
++// Call this after adding all files and before writing the archive.
++func (archive *Archive) ExpandUsrMergeAliases() {
++	archive.items.Lock()
++	defer archive.items.Unlock()
++
++	var expanded archiveItems
++	for _, item := range archive.items.items {
++		alias := false
++		for _, link := range usrMergeLinks {
++			if item.header.Name == link.name {
++				alias = true
++				break
++			}
++		}
++		if !alias {
++			expanded.add(item)
++		}
++	}
++	for _, link := range usrMergeLinks {
++		expanded.add(archiveItem{header: &cpio.Header{
++			Name: link.name,
++			Mode: 0755 | cpio.TypeDir,
++		}})
++		target := filepath.Join(filepath.Dir(link.name), link.target)
++		for _, item := range archive.items.items {
++			if strings.HasPrefix(item.header.Name, target+"/") {
++				header := *item.header
++				header.Name = link.name + strings.TrimPrefix(header.Name, target)
++				expanded.add(archiveItem{header: &header, sourcePath: item.sourcePath})
++			}
++		}
++	}
++	archive.items.items = expanded.items
++}
++
+ type archiveItem struct {
+ 	header     *cpio.Header
+ 	sourcePath string
+diff --git a/internal/archive/vendor_ramdisk_test.go b/internal/archive/vendor_ramdisk_test.go
+new file mode 100644
+index 0000000..2c2211e
+--- /dev/null
++++ b/internal/archive/vendor_ramdisk_test.go
+@@ -0,0 +1,87 @@
++// Copyright 2026 Michael McAllister
++// SPDX-License-Identifier: GPL-3.0-or-later
++
++package archive
++
++import (
++	"io"
++	"os"
++	"path/filepath"
++	"testing"
++
++	"github.com/cavaliergopher/cpio"
++)
++
++func TestVendorRamdiskDirectoryCompatibility(t *testing.T) {
++	for _, expand := range []bool{false, true} {
++		name := "usr-merged"
++		if expand {
++			name = "vendor-ramdisk"
++		}
++		t.Run(name, func(t *testing.T) {
++			dir := t.TempDir()
++			source := filepath.Join(dir, "payload")
++			if err := os.WriteFile(source, []byte("payload"), 0755); err != nil {
++				t.Fatal(err)
++			}
++			ar := New(FormatNone, LevelDefault)
++			for _, dest := range []string{"/lib/ld-musl-aarch64.so.1", "/bin/sh", "/sbin/udevd"} {
++				if err := ar.AddItem(source, dest); err != nil {
++					t.Fatal(err)
++				}
++			}
++			if expand {
++				ar.ExpandUsrMergeAliases()
++			}
++			output := filepath.Join(dir, "initramfs")
++			if err := ar.Write(output, 0644); err != nil {
++				t.Fatal(err)
++			}
++			f, err := os.Open(output)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer f.Close()
++			reader := cpio.NewReader(f)
++			headers := map[string]*cpio.Header{}
++			contents := map[string]string{}
++			for {
++				header, err := reader.Next()
++				if err == io.EOF {
++					break
++				}
++				if err != nil {
++					t.Fatal(err)
++				}
++				data, err := io.ReadAll(reader)
++				if err != nil {
++					t.Fatal(err)
++				}
++				headers[header.Name] = header
++				contents[header.Name] = string(data)
++			}
++			for _, alias := range []string{"bin", "sbin", "lib", "usr/sbin"} {
++				header := headers[alias]
++				if header == nil {
++					t.Fatalf("missing directory alias %q", alias)
++				}
++				if expand {
++					if !header.Mode.IsDir() || header.Linkname != "" {
++						t.Errorf("%q cannot overlay an existing vendor directory: %+v", alias, header)
++					}
++				} else if header.Mode&cpio.TypeSymlink == 0 || header.Linkname == "" {
++					t.Errorf("default archive should retain symlink %q", alias)
++				}
++			}
++			paths := []string{"usr/lib/ld-musl-aarch64.so.1", "usr/bin/sh", "usr/bin/udevd"}
++			if expand {
++				paths = append(paths, "lib/ld-musl-aarch64.so.1", "bin/sh", "sbin/udevd", "usr/sbin/udevd")
++			}
++			for _, path := range paths {
++				if contents[path] != "payload" {
++					t.Errorf("missing payload at %q", path)
++				}
++			}
++		})
++	}
++}
+diff --git a/pkgs/deviceinfo/deviceinfo.go b/pkgs/deviceinfo/deviceinfo.go
+index ff0da92..c69e792 100644
+--- a/pkgs/deviceinfo/deviceinfo.go
++++ b/pkgs/deviceinfo/deviceinfo.go
+@@ -16,11 +16,12 @@ import (
+ )
+ 
+ type DeviceInfo struct {
+-	InitfsCompression      string
+-	InitfsExtraCompression string
+-	UbootBoardname         string
+-	FormatVersion          string
+-	CreateInitfsExtra      bool
++	InitfsCompression         string
++	InitfsExtraCompression    string
++	UbootBoardname            string
++	FormatVersion             string
++	CreateInitfsExtra         bool
++	BootimgPreserveVendorBoot bool
+ }
+ 
+ // Reads the relevant entries from "file" into DeviceInfo struct
+diff --git a/pkgs/deviceinfo/deviceinfo_test.go b/pkgs/deviceinfo/deviceinfo_test.go
+index 7be15bf..c73c19e 100644
+--- a/pkgs/deviceinfo/deviceinfo_test.go
++++ b/pkgs/deviceinfo/deviceinfo_test.go
+@@ -4,10 +4,29 @@
+ package deviceinfo
+ 
+ import (
++	"os"
++	"path/filepath"
+ 	"strings"
+ 	"testing"
+ )
+ 
++func TestPreserveVendorBootOverride(t *testing.T) {
++	var devinfo DeviceInfo
++	path := filepath.Join(t.TempDir(), "deviceinfo")
++	for _, value := range []string{"true", "false"} {
++		config := "deviceinfo_format_version=\"0\"\ndeviceinfo_bootimg_preserve_vendor_boot=\"" + value + "\"\n"
++		if err := os.WriteFile(path, []byte(config), 0644); err != nil {
++			t.Fatal(err)
++		}
++		if err := devinfo.ReadDeviceinfo(path); err != nil {
++			t.Fatal(err)
++		}
++		if devinfo.BootimgPreserveVendorBoot != (value == "true") {
++			t.Fatalf("preserve_vendor_boot override %q was not applied", value)
++		}
++	}
++}
++
+ // Test ReadDeviceinfo and the logic of reading from multiple files
+ func TestReadDeviceinfo(t *testing.T) {
+ 	compression_expected := "gz -9"
+-- 
+2.50.1 (Apple Git-155)
+

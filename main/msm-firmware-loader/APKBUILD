@@ -1,7 +1,7 @@
 maintainer="Stefan Hansson <newbyte@postmarketos.org>"
 pkgname=msm-firmware-loader
 pkgver=1.9.0
-pkgrel=0
+pkgrel=1
 pkgdesc="Set of init services to automatically load firmware from device partitions"
 url="https://postmarketos.org/"
 subpackages="
@@ -14,7 +14,9 @@ subpackages="
 "
 arch="armhf armv7 aarch64"
 license="MIT"
+depends="blkid"
 source="
+	0001-msm-firmware-loader.patch
 	https://gitlab.postmarketos.org/postmarketOS/msm-firmware-loader/-/archive/$pkgver/msm-firmware-loader-$pkgver.tar.gz
 	hexagonrpcd-adsp-rootpd.service
 	hexagonrpcd-adsp-sensorspd.service
@@ -22,7 +24,9 @@ source="
 	hexagonrpcd.confd
 "
 install="$pkgname-openrc.post-install"
-options="!check"
+check() {
+	sh tests/firmware.sh
+}
 
 package() {
 	install -Dm755 msm-firmware-loader.sh \
@@ -82,6 +86,7 @@ hexagonrpcd_openrc() {
 }
 
 sha512sums="
+9e71d271a00cb3d2c650f599fe7d75d4ce64400f19b95b313039e6b0b8d3ee47155c0f9964331205213351b4805d2634a816ebd6b956aaee0a551ad50c041d94  0001-msm-firmware-loader.patch
 2c83289c67588a2dfa9623c7f5b4b94de5d9ca89fbace1c1f49036a87f2803ed2334402a8af598966ed55ad9a9e72e873f41f21305d620830334f87f8e316014  msm-firmware-loader-1.9.0.tar.gz
 40907eca4d20c6644ceeef59b1093080313ea925f34e0c858630d9e34bef3fd85d4b82043ba945f577c4b30e81c71809ab186287d78dcc6b72b1e81d882b66ab  hexagonrpcd-adsp-rootpd.service
 134762b172fbc2a28c1963f5594829661ffe0d49d354d85c376c7121d9d761a25b87dc5ffdba5bf021fc729bae0ce9cdc3a9af74ef415ee0860ffae391d260b2  hexagonrpcd-adsp-sensorspd.service

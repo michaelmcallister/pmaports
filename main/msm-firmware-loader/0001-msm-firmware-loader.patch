@@ -1,0 +1,193 @@
+From: Michael McAllister <me@michaelmcallister.org>
+Subject: [PATCH] Load active-slot firmware and modern SSC sensor registries
+
+Select the active A/B metadata slot when mapping dynamic partitions. Mount
+ext filesystems without journal replay, including the idmapped persist mount.
+Keep a readable runtime copy of the sensor registry for FastRPC clients that
+use the firmware directory, without changing the original calibration.
+
+--- a/msm-firmware-loader.sh
++++ b/msm-firmware-loader.sh
+@@ -39,6 +39,52 @@
+ 	fi
+ }
+ 
++# Keep journal replay disabled when inspecting Android ext filesystems.
++mount_firmware_partition() {
++	local options="ro,nodev,noexec,nosuid"
++	case "$(blkid -s TYPE -o value "$1")" in
++		ext3|ext4) options="$options,noload" ;;
++	esac
++	mount -o "$options" "$@"
++}
++
++map_dynamic_partitions() {
++	case "$(ab_get_slot)" in
++		_a) make-dynpart-mappings "$1" 0 ;;
++		_b) make-dynpart-mappings "$1" 1 ;;
++		*) make-dynpart-mappings "$1" ;;
++	esac
++}
++
++# Modern SSC firmware uses a directory of registry files instead of sns.reg.
++# Copy it into /run so unprivileged FastRPC services can read Android-owned
++# calibration without changing persist's ownership or writing to the partition.
++setup_sensor_registry() {
++	local registry="$BASEDIR/mnt/persist/sensors/registry/registry"
++	local config
++	config="$BASEDIR/mnt/vendor$(ab_get_slot)/etc/sensors/sns_reg_config"
++	local target="$BASEDIR/target/qcom/sensors"
++	if [ -d "$registry" ] && [ ! -e "$target/registry" ]; then
++		mkdir -p "$target"
++		cp -R "$registry" "$target/registry"
++		chmod -R a=rX "$target/registry"
++	fi
++	if [ -f "$config" ] && [ ! -e "$target/sns_reg.conf" ]; then
++		mkdir -p "$target"
++		ln -s "$config" "$target/sns_reg.conf"
++	fi
++}
++
++# Match whole partition names: "sp" must not match a listed "dsp_b".
++is_listed_partition() {
++	local partition="$1" candidate
++	shift
++	for candidate do
++		[ "$partition" != "$candidate" ] || return 0
++	done
++	return 1
++}
++
+ # Configurations:
+ 
+ # List of partitions to be mounted and inspected for blobs.
+@@ -67,6 +113,7 @@
+ # may not be available yet. Since this script only creates symlinks, it
+ # uses tmpfs to work around the early-run limitations as well as to reduce
+ # disk wear slightly.
++mkdir -p "$BASEDIR"
+ mount -o mode=755,nodev,noexec,nosuid -t tmpfs none "$BASEDIR"
+ 
+ mkdir -p "$BASEDIR/mnt"
+@@ -87,20 +134,21 @@
+ 		DEVNAME="$(grep DEVNAME "$part"/uevent | sed 's/DEVNAME=//g')"
+ 		PARTNAME="$(grep PARTNAME "$part"/uevent | sed 's/PARTNAME=//g')"
+ 
+-		if [ -z "${SUPER_PARTITIONS##*"$PARTNAME"*}" ] && [ -n "$PARTNAME" ]
++		# shellcheck disable=SC2086 # Whitespace-separated partition list.
++		if is_listed_partition "$PARTNAME" $SUPER_PARTITIONS
+ 		then
+ 			# system is for retrofit targets, not all devices may be
+ 			# retrofit, in which case make-dynpart-mappings will fail.
+-			if ! make-dynpart-mappings "/dev/$DEVNAME"; then continue; fi;
++			if ! map_dynamic_partitions "/dev/$DEVNAME"; then continue; fi;
+ 
+ 			for dynpart in /dev/mapper/*
+ 			do
+ 				PARTNAME="$(basename "$dynpart")"
+-				if [ -z "${FW_PARTITIONS##*"$PARTNAME"*}" ] && [ -n "$PARTNAME" ]
++				# shellcheck disable=SC2086 # Whitespace-separated partition list.
++				if is_listed_partition "$PARTNAME" $FW_PARTITIONS
+ 				then
+ 					mkdir -p "$BASEDIR/mnt/$PARTNAME"
+-					mount -o ro,nodev,noexec,nosuid \
+-						"$dynpart" "$BASEDIR/mnt/$PARTNAME"
++					mount_firmware_partition "$dynpart" "$BASEDIR/mnt/$PARTNAME"
+ 				fi
+ 			done
+ 
+@@ -117,11 +165,11 @@
+ 	DEVNAME="$(grep DEVNAME "$part"/uevent | sed 's/DEVNAME=//g')"
+ 	PARTNAME="$(grep PARTNAME "$part"/uevent | sed 's/PARTNAME=//g')"
+ 
+-	if [ -z "${FW_PARTITIONS##*"$PARTNAME"*}" ] && [ -n "$PARTNAME" ] && [ ! -d "$BASEDIR/mnt/$PARTNAME" ]
++	# shellcheck disable=SC2086 # Whitespace-separated partition list.
++	if is_listed_partition "$PARTNAME" $FW_PARTITIONS && [ ! -d "$BASEDIR/mnt/$PARTNAME" ]
+ 	then
+ 		mkdir -p "$BASEDIR/mnt/$PARTNAME"
+-		mount -o ro,nodev,noexec,nosuid \
+-			"/dev/$DEVNAME" "$BASEDIR/mnt/$PARTNAME"
++		mount_firmware_partition "/dev/$DEVNAME" "$BASEDIR/mnt/$PARTNAME"
+ 		# Some devices have 600 permissions on persist, therefore we need an additional
+ 		# mount with UID and GID mappings for hexagonrpcd to access it
+ 		sensors_file="$BASEDIR/mnt/persist/sensors/registry/registry/sensors_registry"
+@@ -133,10 +181,9 @@
+ 			target_gid="$(id -g fastrpc)"
+ 			mkdir -p "$BASEDIR/mnt/persist-fastrpc"
+ 			# Kernel requires both UID and GID mapped
+-			mount -o ro,nodev,noexec,nosuid \
++			mount_firmware_partition "/dev/$DEVNAME" "$BASEDIR/mnt/persist-fastrpc" \
+ 				--map-users="$source_uid:$target_uid:1" \
+-				--map-groups="$source_gid:$target_gid:1" \
+-				"/dev/$DEVNAME" "$BASEDIR/mnt/persist-fastrpc"
++				--map-groups="$source_gid:$target_gid:1"
+ 		fi
+ 	fi
+ done
+@@ -183,6 +230,8 @@
+ 		fi
+ 	done
+ done
++
++setup_sensor_registry
+ 
+ # Check for sns.reg in persist partition
+ link_path "$BASEDIR"/mnt/persist/sensors/sns.reg "$BASEDIR"/target/qcom/sensors/sns.reg
+@@ -293,4 +342,3 @@
+ 
+ # Set the new custom firmware path:
+ printf "%s" "$BASEDIR/target" > /sys/module/firmware_class/parameters/path
+-
+--- /dev/null
++++ b/tests/firmware.sh
+@@ -0,0 +1,50 @@
++#!/bin/sh
++# SPDX-License-Identifier: MIT
++set -eu
++source_dir=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
++tmp=$(mktemp -d)
++trap 'chmod -R u+w "$tmp"; rm -rf "$tmp"' EXIT
++# Load just the functions; the production entry point must not run in tests.
++sed '/^# Configurations:/,$d' "$source_dir/msm-firmware-loader.sh" > "$tmp/functions"
++. "$tmp/functions"
++is_listed_partition dsp_b modem_b dsp_b persist
++is_listed_partition vendor_b vendor_b
++! is_listed_partition sp modem_b dsp_b persist
++! is_listed_partition vendor vendor_b
++! is_listed_partition '' modem_b dsp_b persist
++ab_get_slot() { printf '%s\n' "$slot"; }
++# shellcheck disable=SC3033 # BusyBox ash supports mocking this command name.
++make-dynpart-mappings() { printf '%s\n' "$*"; }
++for slot in _a _b ''; do
++ case "$slot" in _a) expected='/dev/super 0';; _b) expected='/dev/super 1';; '') expected='/dev/super';; esac
++ test "$(map_dynamic_partitions /dev/super)" = "$expected"
++done
++blkid() { printf '%s\n' "$filesystem"; }
++mount() { printf '%s\n' "$*"; }
++for filesystem in ext4 ext3 vfat; do
++ options='ro,nodev,noexec,nosuid'
++ case "$filesystem" in ext*) options="$options,noload";; esac
++ test "$(mount_firmware_partition /dev/vendor /mnt/vendor)" = "-o $options /dev/vendor /mnt/vendor"
++done
++filesystem=ext4
++test "$(mount_firmware_partition /dev/persist /mnt/persist --map-users=1:2:1 --map-groups=1:2:1)" = \
++ "-o ro,nodev,noexec,nosuid,noload /dev/persist /mnt/persist --map-users=1:2:1 --map-groups=1:2:1"
++BASEDIR="$tmp/firmware"
++slot=_b
++mkdir -p "$BASEDIR/mnt/persist/sensors/registry/registry" "$BASEDIR/mnt/vendor_b/etc/sensors"
++printf 'private calibration\n' > "$BASEDIR/mnt/persist/sensors/registry/registry/calibration"
++printf 'vendor sensor config\n' > "$BASEDIR/mnt/vendor_b/etc/sensors/sns_reg_config"
++chmod 600 "$BASEDIR/mnt/persist/sensors/registry/registry/calibration"
++setup_sensor_registry
++cmp "$BASEDIR/mnt/persist/sensors/registry/registry/calibration" "$BASEDIR/target/qcom/sensors/registry/calibration"
++test "$(stat -c %a "$BASEDIR/target/qcom/sensors/registry/calibration")" = 444
++test "$(stat -c %a "$BASEDIR/mnt/persist/sensors/registry/registry/calibration")" = 600
++cmp "$BASEDIR/mnt/vendor_b/etc/sensors/sns_reg_config" "$BASEDIR/target/qcom/sensors/sns_reg.conf"
++setup_sensor_registry
++test ! -e "$BASEDIR/target/qcom/sensors/registry/registry"
++# Devices with no modern registry remain supported.
++BASEDIR="$tmp/no-sensors"
++mkdir "$BASEDIR"
++setup_sensor_registry
++test ! -e "$BASEDIR/target"
++echo 'Firmware slot selection, read-only mounts and sensor registry tests passed'

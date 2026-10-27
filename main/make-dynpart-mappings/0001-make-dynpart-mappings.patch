@@ -1,0 +1,165 @@
+From 9cdfbdc8e9e0acf6fd85d58f33be6e1896b245b5 Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Sun, 11 Oct 2026 20:24:46 +0100
+Subject: [PATCH] Read primary and backup metadata at the correct slot offsets
+
+Logical partition metadata stores all primary slots followed by all backup slots. Treating these copies as interleaved can read a different slot, including an empty or stale vendor partition. Seek to each copy explicitly and fail when neither copy for the requested slot is valid.
+
+Add synthetic three-slot fixtures covering distinct primary and backup mappings, corrupt metadata, and invalid slot indices. The tests record device-mapper requests without changing kernel state.
+
+Assisted-by: OpenAI GPT-6
+Signed-off-by: Michael McAllister <me@michaelmcallister.org>
+---
+ main.c                  | 33 +++++++++++++---------
+ tests/dm-stub.c         | 16 +++++++++++
+ tests/metadata-slots.py | 62 +++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 98 insertions(+), 13 deletions(-)
+ create mode 100644 tests/dm-stub.c
+ create mode 100644 tests/metadata-slots.py
+
+diff --git a/main.c b/main.c
+index 400346f..659fbec 100644
+--- a/main.c
++++ b/main.c
+@@ -277,20 +277,28 @@ int main(int argc, char **argv) {
+ 
+ 	header = malloc(le32toh(geom->metadata_max_size));
+ 
+-	// Skip the main and backup metadata of each slot before the requested one
+-	lseek(fd, le32toh(geom->metadata_max_size) * slotN * 2, SEEK_CUR);
++	if (slotN < 0 || (uint32_t)slotN >= le32toh(geom->metadata_slot_count)) {
++		fprintf(stderr, "Metadata slot %d is out of range\n", slotN);
++		return 1;
++	}
+ 
+ 	for (uint32_t i = slotN; i < le32toh(geom->metadata_slot_count); i++) {
+-		// Find the first valid metadata header struct
+-		read(fd, header, le32toh(geom->metadata_max_size));
+-		if (validateMetadataHeader(header, argv[1]))
+-			lseek(fd, le32toh(geom->metadata_max_size), SEEK_CUR);
+-		else
+-			read(fd, header, le32toh(geom->metadata_max_size));
+-
+-		if (validateMetadataHeader(header, argv[1]) == NULL) {
+-			fprintf(stderr, "No valid metadata header found\n");
+-			goto next;
++		/* All primary slots precede all backup slots; copies are not
++		 * interleaved. A backup must belong to the requested slot. */
++		off_t base = LP_PARTITION_RESERVED_BYTES + 2 * LP_METADATA_GEOMETRY_SIZE;
++		size_t metadataSize = le32toh(geom->metadata_max_size);
++		off_t primary = base + (off_t)i * metadataSize;
++		off_t backup = primary + (off_t)le32toh(geom->metadata_slot_count) * metadataSize;
++
++		lseek(fd, primary, SEEK_SET);
++		if (read(fd, header, metadataSize) != (ssize_t)metadataSize ||
++		    !validateMetadataHeader(header, argv[1])) {
++			lseek(fd, backup, SEEK_SET);
++			if (read(fd, header, metadataSize) != (ssize_t)metadataSize ||
++			    !validateMetadataHeader(header, argv[1])) {
++				fprintf(stderr, "No valid metadata header for slot %u\n", i);
++				return 1;
++			}
+ 		}
+ 
+ 		parts = (LpMetadataPartition *) &((uint8_t *) header)[le32toh(header->header_size) + le32toh(header->partitions.offset)];
+@@ -315,7 +323,6 @@ int main(int argc, char **argv) {
+ #endif
+ 		free(blockDevicePaths);
+ 
+-	next:
+ 		// If the user specified a slot, then only that slot should be processed
+ 		if (argc >= 3)
+ 			break;
+diff --git a/tests/dm-stub.c b/tests/dm-stub.c
+new file mode 100644
+index 0000000..2f5dc5b
+--- /dev/null
++++ b/tests/dm-stub.c
+@@ -0,0 +1,16 @@
++/* Record mappings without accessing kernel device-mapper state. */
++#include <stdint.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <libdevmapper.h>
++struct mapping { char *name; };
++struct dm_task *dm_task_create(int type) { return (struct dm_task *)calloc(1, sizeof(struct mapping)); }
++int dm_task_set_name(struct dm_task *task, const char *name) {
++ ((struct mapping *)task)->name = strdup(name); return 1;
++}
++int dm_task_add_target(struct dm_task *task, uint64_t start, uint64_t size, const char *type, const char *params) {
++ printf("%s %s\n", ((struct mapping *)task)->name, params); return 1;
++}
++int dm_task_run(struct dm_task *task) { return 1; }
++void dm_task_destroy(struct dm_task *task) { free(((struct mapping *)task)->name); free(task); }
+diff --git a/tests/metadata-slots.py b/tests/metadata-slots.py
+new file mode 100644
+index 0000000..92e7b50
+--- /dev/null
++++ b/tests/metadata-slots.py
+@@ -0,0 +1,62 @@
++#!/usr/bin/env python3
++"""Exercise slot selection and backup fallback without block devices or root.
++
++Build the mapper with USERSPACE=1 and preload the accompanying dm-stub.so.
++"""
++import hashlib
++import os
++from pathlib import Path
++import struct
++import subprocess
++import sys
++import tempfile
++
++SLOTS = 3
++SIZE = 4096
++BASE = 12288
++
++def metadata(slot, backup=False):
++    # Distinct extents make selecting a wrong slot or copy observable.
++    sector = 128 + slot * 16 + (8 if backup else 0)
++    parts = struct.pack('<36sIIII', b'vendor', 1, 0, 1, 0)
++    extents = struct.pack('<QIQI', 8, 0, sector, 0)
++    groups = struct.pack('<36sIQ', b'main', 0, 0)
++    blocks = struct.pack('<QIIQ36sI', 128, 4096, 0, 1048576, b'super', 0)
++    tables = parts + extents + groups + blocks
++    header = struct.pack('<IHHI32sI32s', 0x414c5030, 10, 0, 128, bytes(32),
++                         len(tables), hashlib.sha256(tables).digest())
++    offset = 0
++    for table in (parts, extents, groups, blocks):
++        header += struct.pack('<III', offset, 1, len(table))
++        offset += len(table)
++    header = header[:12] + hashlib.sha256(header).digest() + header[44:]
++    return (header + tables).ljust(SIZE, b'\0')
++
++geometry = struct.pack('<II32sIII', 0x616c4467, 52, bytes(32), SIZE, SLOTS, 4096)
++geometry = geometry[:8] + hashlib.sha256(geometry).digest() + geometry[40:]
++fixture = (bytes(4096) + geometry.ljust(4096, b'\0') * 2 +
++           b''.join(metadata(i) for i in range(SLOTS)) +
++           b''.join(metadata(i, True) for i in range(SLOTS)))
++mapper, stub = map(lambda x: str(Path(x).resolve()), sys.argv[1:3])
++env = dict(os.environ, LD_PRELOAD=stub)
++with tempfile.TemporaryDirectory() as directory:
++    image = Path(directory) / 'super.img'
++    def run(data, slot, expected):
++        image.write_bytes(data)
++        p = subprocess.run([mapper, str(image), str(slot)], env=env,
++                           text=True, capture_output=True)
++        if expected is None:
++            assert p.returncode != 0, p.stdout + p.stderr
++        else:
++            assert p.returncode == 0, p.stderr
++            assert p.stdout.split()[-1] == str(expected), p.stdout
++    for i in range(SLOTS):
++        run(fixture, i, 128 + i * 16)
++        damaged = bytearray(fixture)
++        damaged[BASE + i * SIZE] = 0
++        run(damaged, i, 128 + i * 16 + 8)
++        damaged[BASE + (SLOTS + i) * SIZE] = 0
++        run(damaged, i, None)
++    for i in (-1, SLOTS):
++        run(fixture, i, None)
++print('11 metadata slot and backup cases passed')
+-- 
+2.50.1 (Apple Git-155)
+

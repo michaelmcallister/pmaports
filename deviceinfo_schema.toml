@@ -269,6 +269,11 @@ description = "Set this to true for fastboot device, so the mkinitfs command wil
 datatype = "boolean"
 default_value = false
 
+[variable.flash.bootimg_preserve_vendor_boot]
+description = "For Android boot image header versions 3 and 4, keep the existing vendor_boot partition and put the initramfs and command line in boot.img. The bootloader may prepend its vendor ramdisk, so the initramfs must tolerate existing directories and files. Neither boot-deploy nor pmbootstrap will generate or flash vendor_boot.img in this mode."
+datatype = "boolean"
+default_value = false
+
 [variable.flash.generate_extlinux_config]
 description = "Set this to `true` for U-Boot device, so the mkinitfs command will generate a /boot/extlinux/extlinux.conf file after creating the initfs."
 datatype = "boolean"

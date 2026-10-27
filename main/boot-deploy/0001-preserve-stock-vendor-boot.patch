@@ -1,0 +1,251 @@
+From f7618d15413f4df423ecab639b3bb302e5d242dd Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Sun, 11 Oct 2026 19:39:14 +0100
+Subject: [PATCH] bootimg: support retaining the stock vendor_boot
+
+Allow header-v3/v4 devices to keep the vendor boot image and place the
+ramdisk and command line in boot.img. Skip vendor flashing explicitly,
+including when a stale vendor_boot.img exists in the staging directory.
+
+Cover image arguments and A/B deployment with preservation enabled and
+disabled, and reject incompatible header versions.
+
+Assisted-by: LLM
+---
+ .ci/shellcheck.sh             |   1 +
+ boot-deploy-functions.sh      |  53 ++++++++++++-----
+ test_android_bootimg.sh       | 105 ++++++++++++++++++++++++++++++++++
+ test_boot_deploy_functions.sh |   1 +
+ 4 files changed, 146 insertions(+), 14 deletions(-)
+ create mode 100644 test_android_bootimg.sh
+
+diff --git a/.ci/shellcheck.sh b/.ci/shellcheck.sh
+index 6a697af..a58e815 100755
+--- a/.ci/shellcheck.sh
++++ b/.ci/shellcheck.sh
+@@ -15,6 +15,7 @@ sh_files="
+ 	./boot-deploy
+ 	./boot-deploy-functions.sh
+ 	./test_boot_deploy_functions.sh
++	./test_android_bootimg.sh
+ 	./.ci/*.sh
+ "
+ 
+diff --git a/boot-deploy-functions.sh b/boot-deploy-functions.sh
+index 675fb0d..e2a547b 100755
+--- a/boot-deploy-functions.sh
++++ b/boot-deploy-functions.sh
+@@ -26,6 +26,7 @@ deviceinfo_bootimg_dtb_second=""
+ deviceinfo_bootimg_mtk_label_kernel=""
+ deviceinfo_bootimg_mtk_label_ramdisk=""
+ deviceinfo_bootimg_prepend_dhtb=""
++deviceinfo_bootimg_preserve_vendor_boot=""
+ deviceinfo_bootimg_pxa=""
+ deviceinfo_bootimg_qcdt=""
+ deviceinfo_bootimg_qcdt_type=""
+@@ -196,6 +197,7 @@ validate_deviceinfo() {
+ 		deviceinfo_append_dtb \
+ 		deviceinfo_arch \
+ 		deviceinfo_bootimg_prepend_dhtb \
++		deviceinfo_bootimg_preserve_vendor_boot \
+ 		deviceinfo_bootimg_append_seandroidenforce \
+ 		deviceinfo_bootimg_blobpack \
+ 		deviceinfo_bootimg_dtb_second \
+@@ -225,6 +227,13 @@ validate_deviceinfo() {
+ 			fi
+ 		done
+ 
++	if [ "$deviceinfo_bootimg_preserve_vendor_boot" = "true" ] &&
++		[ "$deviceinfo_header_version" != "3" ] &&
++		[ "$deviceinfo_header_version" != "4" ]; then
++		log "ERROR: preserving vendor_boot requires boot image header version 3 or 4"
++		_fail=true
++	fi
++
+ 	if "$_fail"; then
+ 		echo "For more information, see: https://wiki.postmarketos.org/wiki/Deviceinfo_reference#Case_sensitivity"
+ 		exit 1
+@@ -863,19 +872,33 @@ create_bootimg() {
+ 	if [ "$deviceinfo_header_version" = "3" ] || [ "$deviceinfo_header_version" = "4" ]; then
+ 		require_package "mkbootimg" "android-tools" "generate_bootimg"
+ 
+-		# shellcheck disable=SC2039 disable=SC2086
+-		mkbootimg \
+-			--header_version "${deviceinfo_header_version}" \
+-			--dtb "${_dtb}" \
+-			--kernel "${_kernelfile}" \
+-			--vendor_ramdisk "$_ramdisk" \
+-			--vendor_cmdline "$(get_cmdline)" \
+-			--pagesize "${deviceinfo_flash_pagesize}" \
+-			${deviceinfo_bootimg_custom_args} \
+-			--vendor_boot "$_vendor_bootimg" \
+-			-o "$_bootimg" || exit 1
+-
+-		additional_files="$additional_files $(basename $_vendor_bootimg)"
++		if [ "$deviceinfo_bootimg_preserve_vendor_boot" = "true" ]; then
++			# Some bootloaders require the original vendor DT and ramdisk.
++			# They prepend that ramdisk to the generic ramdisk in boot.img.
++			# Do not generate or deploy a replacement vendor_boot.img.
++			# shellcheck disable=SC2086
++			mkbootimg \
++				--header_version "$deviceinfo_header_version" \
++				--kernel "$_kernelfile" \
++				--ramdisk "$_ramdisk" \
++				--cmdline "$(get_cmdline)" \
++				${deviceinfo_bootimg_custom_args} \
++				-o "$_bootimg" || exit 1
++		else
++			# shellcheck disable=SC2039 disable=SC2086
++			mkbootimg \
++				--header_version "${deviceinfo_header_version}" \
++				--dtb "${_dtb}" \
++				--kernel "${_kernelfile}" \
++				--vendor_ramdisk "$_ramdisk" \
++				--vendor_cmdline "$(get_cmdline)" \
++				--pagesize "${deviceinfo_flash_pagesize}" \
++				${deviceinfo_bootimg_custom_args} \
++				--vendor_boot "$_vendor_bootimg" \
++				-o "$_bootimg" || exit 1
++
++			additional_files="$additional_files $(basename $_vendor_bootimg)"
++		fi
+ 	else
+ 		local _header_version_arg="--header_version ${deviceinfo_header_version}"
+ 		# don't add --header_version if deviceinfo_header_version is empty
+@@ -1023,7 +1046,9 @@ vendor_flash_android_bootimg() {
+ 
+ 	dd if="$work_dir/$bootimg_filename" of="$boot_partition" bs=1M
+ 
+-	if { [ "$deviceinfo_header_version" = "3" ] || [ "$deviceinfo_header_version" = "4" ]; } && [ -e "$work_dir/vendor_boot.img" ]; then
++	if [ "$deviceinfo_bootimg_preserve_vendor_boot" != "true" ] &&
++		{ [ "$deviceinfo_header_version" = "3" ] || [ "$deviceinfo_header_version" = "4" ]; } &&
++		[ -e "$work_dir/vendor_boot.img" ]; then
+ 		vendor_boot_partition=$(findfs PARTLABEL="${vendor_partlabel}${boot_part_suffix}")
+ 		if ! check_image_size "$work_dir/vendor_boot.img" "$vendor_boot_partition"; then
+ 			log_boot_partition_too_small_suggestion
+diff --git a/test_android_bootimg.sh b/test_android_bootimg.sh
+new file mode 100644
+index 0000000..4d50965
+--- /dev/null
++++ b/test_android_bootimg.sh
+@@ -0,0 +1,105 @@
++#!/bin/sh -eu
++# SPDX-License-Identifier: GPL-3.0-or-later
++
++# shellcheck disable=SC1091
++. ./boot-deploy-functions.sh
++
++wdir="$(mktemp -d)"
++trap 'rm -rf "$wdir"' EXIT
++
++# Exercise boot-deploy's selection and deployment with regular files as
++# partitions. A stale vendor_boot.img must never defeat preservation mode.
++test_android_bootimg() (
++	deviceinfo_header_version="$1"
++	deviceinfo_bootimg_preserve_vendor_boot="$2"
++	deviceinfo_arch="aarch64"
++	deviceinfo_generate_bootimg="true"
++	deviceinfo_flash_pagesize="4096"
++	work_dir="$wdir/$1-${2:-default}"
++	kernel_filename="vmlinuz"
++	initfs_filename="initramfs"
++	additional_files=""
++	mkdir -p "$work_dir/partitions"
++	printf 'new kernel' >"$work_dir/vmlinuz"
++	printf 'new ramdisk' >"$work_dir/initramfs"
++	printf 'stale vendor image' >"$work_dir/vendor_boot.img"
++	printf 'old boot' >"$work_dir/partitions/boot_b"
++	printf 'stock vendor' >"$work_dir/partitions/vendor_boot_b"
++	printf 'other slot' >"$work_dir/partitions/boot_a"
++
++	get_cmdline() { echo 'rootwait test.override=yes'; }
++	require_package() { :; }
++	# The real mkbootimg integration is covered by the integration test job.
++	mkbootimg() {
++		printf '%s\n' "$@" >"$work_dir/mkbootimg.args"
++		while [ "$#" -gt 0 ]; do
++			case "$1" in
++				-o) printf 'new boot' >"$2"; shift ;;
++				--vendor_boot) printf 'new vendor' >"$2"; shift ;;
++			esac
++			shift
++		done
++	}
++
++	validate_deviceinfo
++	create_bootimg
++	test "$(cat "$work_dir/boot.img")" = 'new boot'
++	grep -qx -- 'rootwait test.override=yes' "$work_dir/mkbootimg.args"
++	case "$1:$2" in
++		3:true|4:true)
++			grep -qx -- '--ramdisk' "$work_dir/mkbootimg.args"
++			grep -qx -- '--cmdline' "$work_dir/mkbootimg.args"
++			! grep -q -- '--vendor_' "$work_dir/mkbootimg.args"
++			test "$(cat "$work_dir/vendor_boot.img")" = 'stale vendor image'
++			case " $additional_files " in
++				*' vendor_boot.img '*) exit 1 ;;
++			esac
++			;;
++		3:*|4:*)
++			grep -qx -- '--vendor_ramdisk' "$work_dir/mkbootimg.args"
++			grep -qx -- '--vendor_cmdline' "$work_dir/mkbootimg.args"
++			case " $additional_files " in
++				*' vendor_boot.img '*) : ;;
++				*) exit 1 ;;
++			esac
++			;;
++		*)
++			grep -qx -- '--ramdisk' "$work_dir/mkbootimg.args"
++			! grep -q -- '--vendor_' "$work_dir/mkbootimg.args"
++			;;
++	esac
++
++	ab_get_slot() { echo _b; }
++	findfs() { echo "$work_dir/partitions/${1#PARTLABEL=}"; }
++	check_image_size() { test -f "$1" && test -f "$2"; }
++	vendor_flash_android_bootimg boot vendor_boot
++	test "$(cat "$work_dir/partitions/boot_b")" = 'new boot'
++	test "$(cat "$work_dir/partitions/boot_a")" = 'other slot'
++	case "$1:$2" in
++		3:true|4:true|0:*)
++			test "$(cat "$work_dir/partitions/vendor_boot_b")" = 'stock vendor'
++			;;
++		*) test "$(cat "$work_dir/partitions/vendor_boot_b")" = 'new vendor' ;;
++	esac
++	echo "test_android_bootimg (header $1, preserve ${2:-default}): pass"
++)
++
++for header in 3 4; do
++	for preserve in true false ''; do
++		test_android_bootimg "$header" "$preserve"
++	done
++done
++test_android_bootimg 0 ''
++
++for header in '' 0 1 2; do
++	if (
++		deviceinfo_arch="aarch64"
++		deviceinfo_header_version="$header"
++		deviceinfo_bootimg_preserve_vendor_boot="true"
++		validate_deviceinfo
++	); then
++		echo "Invalid preservation mode accepted for header '$header'" >&2
++		exit 1
++	fi
++done
++echo 'test_android_bootimg (invalid header versions): pass'
+diff --git a/test_boot_deploy_functions.sh b/test_boot_deploy_functions.sh
+index f9bc5f4..feecf27 100755
+--- a/test_boot_deploy_functions.sh
++++ b/test_boot_deploy_functions.sh
+@@ -253,6 +253,7 @@ test_copy_files
+ test_invalid_dtb
+ test_extlinux_config
+ test_uboot_env
++sh ./test_android_bootimg.sh
+ 
+ rm -rf "$wdir"
+ trap - INT EXIT TERM
+-- 
+2.50.1 (Apple Git-155)
+

@@ -1,0 +1,56 @@
+# Forked from Alpine to backport Moto G10 display geometry and wakeup keys.
+# https://gitlab.gnome.org/World/Phosh/gmobile/-/merge_requests/129
+# Contributor: team/phosh <achill@achill.org>
+maintainer="Michael McAllister <me@michaelmcallister.org>"
+pkgname=gmobile
+pkgver=0.7.4
+pkgrel=1
+pkgdesc="Functions useful in mobile related, glib based projects"
+url="https://gitlab.gnome.org/World/Phosh/gmobile"
+arch="all"
+license="GPL-3.0-only"
+makedepends="
+	meson
+	glib-dev
+	json-glib-dev
+	gobject-introspection-dev
+	vala
+	"
+subpackages="
+	$pkgname-dbg
+	$pkgname-dev
+	$pkgname-examples
+	$pkgname-udev
+	"
+replaces="phoc"
+source="
+	https://sources.phosh.mobi/releases/gmobile/gmobile-$pkgver.tar.xz
+	0001-motorola-capri-display.patch
+	0002-motorola-capri-wakeup-keys.patch
+	"
+
+build() {
+	abuild-meson build
+	meson compile -C build
+}
+
+check() {
+	meson test -C build
+}
+
+package() {
+	DESTDIR="$pkgdir" meson install --no-rebuild -C build
+}
+
+examples() {
+	pkgdesc="$pkgdesc (examples)"
+	depends="phoc phosh"
+
+	amove usr/bin
+}
+
+sha512sums="
+27a48bbb04d443f1d134f659a50804e35fa0eee2017dab49763aa4a80f89d38bb4b1b76f3d5b5df211a9e0fa00a982b5c7a4e024d354c79ee7513aa1edd02062  gmobile-0.7.4.tar.xz
+aa19169d7c399f94ce0519ba09ce5c1fd00596e413827bb6885bb440d7e4676f6113661b1e95e4cdb97c281dd938c1aaa5cb4dbeded087506c67789b1294f6de  0001-motorola-capri-display.patch
+298190e84f8baaad3237bb36edbce33b6be0e336652450f3ebec580922e27ecdae4777f091f490cbffe69e0c5cbe763d36ad102920f03b103e7cc48f9a8ce1a5  0002-motorola-capri-wakeup-keys.patch
+"

@@ -1,0 +1,37 @@
+From ece9af9722432662a6bdacfa55e634baf86f71c1 Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Sun, 25 Oct 2026 12:45:13 +0000
+Subject: [PATCH] data/hwdb: Add wakeup keys for Motorola Moto G10
+
+Prevent the volume buttons from unblanking the screen. Volume down is
+provided by pm8941_resin and volume up by gpio-keys. Leave the power
+button unchanged.
+---
+ data/61-gmobile-wakeup.hwdb | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/data/61-gmobile-wakeup.hwdb b/data/61-gmobile-wakeup.hwdb
+index 85eb242..da3126b 100644
+--- a/data/61-gmobile-wakeup.hwdb
++++ b/data/61-gmobile-wakeup.hwdb
+@@ -115,6 +115,17 @@ gmobile:atkbd:dmi:bvnAMI:bvr*:svnJunoComputers:pnjunotab4-wifi:*
+  GM_WAKEUP_KEY_114=0
+  GM_WAKEUP_KEY_115=0
+ 
++###########################################################
++# Motorola
++###########################################################
++
++# Moto G10 (capri)
++gmobile:name:pm8941_resin:dt:motorola,capri*
++ GM_WAKEUP_KEY_114=0
++
++gmobile:name:gpio-keys:dt:motorola,capri*
++ GM_WAKEUP_KEY_115=0
++
+ ###########################################################
+ # OnePlus
+ ###########################################################
+-- 
+2.50.1 (Apple Git-155)
+

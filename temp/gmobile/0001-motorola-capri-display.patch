@@ -1,0 +1,62 @@
+From 7e65ae783f5592fbe3b3c95f0f19882eee63303e Mon Sep 17 00:00:00 2001
+From: Michael McAllister <me@michaelmcallister.org>
+Date: Wed, 21 Oct 2026 22:08:02 +0100
+Subject: [PATCH] data: Add display panel for Motorola Moto G10 (capri)
+
+Add the panel dimensions, rounded corners and central notch for the
+motorola,capri compatible. Trace the curved notch from photographs of
+the device, using the panel's native 720x1600 coordinates. Retain the
+68-pixel corner radii from the LineageOS device resources.
+
+Verified that gmobile accepts the profile and that Phosh and phoc load
+it on a Moto G10 using a GResource overlay.
+
+Sources:
+https://github.com/LineageOS/android_device_motorola_capri/blob/da1a52ed454cb43d31bfd5ac5681706ea693f190/resource-overlay/device/Frameworks/res/values/config.xml
+https://github.com/LineageOS/android_device_motorola_capri/blob/da1a52ed454cb43d31bfd5ac5681706ea693f190/resource-overlay/device/Frameworks/res/values/dimens.xml
+---
+ .../display-panels/motorola,capri.json        | 19 +++++++++++++++++++
+ data/gmobile.gresources.xml                   |  1 +
+ 2 files changed, 20 insertions(+)
+ create mode 100644 data/devices/display-panels/motorola,capri.json
+
+diff --git a/data/devices/display-panels/motorola,capri.json b/data/devices/display-panels/motorola,capri.json
+new file mode 100644
+index 0000000..0ba54c5
+--- /dev/null
++++ b/data/devices/display-panels/motorola,capri.json
+@@ -0,0 +1,19 @@
++{
++  "name": "Motorola Moto G10",
++  "x-res": 720,
++  "y-res": 1600,
++  "corner-radii": [
++    68,
++    68,
++    68,
++    68
++  ],
++  "width": 68,
++  "height": 151,
++  "cutouts": [
++    {
++      "name": "notch",
++      "path": "M 280,0 C 304,0 320,19 325,25 C 330,31 342,42 360,42 C 378,42 390,31 395,25 C 400,19 416,0 440,0 Z"
++    }
++  ]
++}
+diff --git a/data/gmobile.gresources.xml b/data/gmobile.gresources.xml
+index cb947f3..886608e 100644
+--- a/data/gmobile.gresources.xml
++++ b/data/gmobile.gresources.xml
+@@ -12,6 +12,7 @@
+     <file preprocess="json-stripblanks">devices/display-panels/gigaset,gs5.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/gigaset,gx4.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/moto,bronco.json</file>
++    <file preprocess="json-stripblanks">devices/display-panels/motorola,capri.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/motorola,dubai.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/motorola,river.json</file>
+     <file preprocess="json-stripblanks">devices/display-panels/nothing,spacewar.json</file>
+-- 
+2.50.1 (Apple Git-155)
+

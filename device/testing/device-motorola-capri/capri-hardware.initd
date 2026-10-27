@@ -1,0 +1,14 @@
+#!/sbin/openrc-run
+description="Start Moto G10 modem, Wi-Fi and audio firmware"
+
+depend() {
+	need localmount msm-firmware-loader rmtfs tqftpserv
+	after modules udev-settle
+	before alsasound networkmanager
+}
+
+start() {
+	ebegin "Starting Moto G10 hardware"
+	/usr/libexec/capri-hardware
+	eend $?
+}

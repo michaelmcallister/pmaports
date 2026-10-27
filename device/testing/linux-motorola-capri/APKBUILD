@@ -1,0 +1,77 @@
+maintainer="Michael McAllister <me@michaelmcallister.org>"
+pkgname=linux-motorola-capri
+pkgver=7.2.9
+pkgrel=8
+pkgdesc="Linux kernel for Motorola Moto G10"
+arch="aarch64"
+_carch="arm64"
+_flavor="motorola-capri"
+url="https://github.com/michaelmcallister/linux-motorola-capri"
+license="GPL-2.0-only"
+options="!strip !check !tracedeps pmb:cross-native"
+makedepends="
+	bash
+	bc
+	bison
+	clang
+	elfutils-dev
+	findutils
+	flex
+	kmod
+	lld
+	llvm
+	openssl-dev
+	pahole
+	perl
+	python3
+	zstd
+"
+_commit="232c314e8909dd77395b2c553e7dda2232e4a4cc"
+_config="config-$_flavor.$arch"
+source="
+	$pkgname-$_commit.tar.gz::$url/archive/$_commit.tar.gz
+	$_config
+	0001-sm6115-mdss-ahb-clock.patch
+	0002-capri-brightness-lpm.patch
+"
+builddir="$srcdir/$pkgname-$_commit"
+
+prepare() {
+	default_prepare
+	mkdir -p out
+	cp "$srcdir/$_config" out/.config
+	# GitHub source archives have no SCM suffix.
+	touch .scmversion
+	make O=out ARCH="$_carch" LLVM=1 olddefconfig
+}
+
+build() {
+	unset LDFLAGS
+	make O=out ARCH="$_carch" LLVM=1 qcom/sm4250-motorola-capri.dtb
+	python3 scripts/capri/embed-dtb.py \
+		out/arch/arm64/boot/dts/qcom/sm4250-motorola-capri.dtb \
+		out/include/generated/capri-dtb.h
+	make O=out ARCH="$_carch" LLVM=1 \
+		KBUILD_BUILD_VERSION="$((pkgrel + 1))-$_flavor" Image modules
+	python3 scripts/capri/wrap-image.py out/arch/arm64/boot/Image out/Image.capri
+}
+
+package() {
+	install -Dm644 out/Image.capri "$pkgdir/boot/vmlinuz"
+	install -Dm644 out/.config "$pkgdir/boot/config"
+	install -Dm644 out/System.map "$pkgdir/boot/System.map"
+	install -Dm644 out/arch/arm64/boot/dts/qcom/sm4250-motorola-capri.dtb \
+		"$pkgdir/boot/dtbs/qcom/sm4250-motorola-capri.dtb"
+	make O=out ARCH="$_carch" LLVM=1 INSTALL_MOD_PATH="$pkgdir"/usr \
+		INSTALL_MOD_STRIP=1 modules_install
+	rm -f "$pkgdir"/usr/lib/modules/*/build "$pkgdir"/usr/lib/modules/*/source
+	install -Dm644 out/include/config/kernel.release \
+		"$pkgdir/usr/share/kernel/$_flavor/kernel.release"
+}
+
+sha512sums="
+b4d08627d561e380d5656b19c60f07528e968b0688bdb4262cdebe068aae43b78ccfaad551c59d0bb0ecb90ff198f89f238932d7d6fe86cf6fda38db0d1d9081  linux-motorola-capri-232c314e8909dd77395b2c553e7dda2232e4a4cc.tar.gz
+3b8a94b7d9c54c1743ab217f763a80d3ad2ad7ba0fedfb31be91e3c1f86f43b586f33ab334286cfae60735ec35abbcee08c0a7c9d39b78754545c25f760eed7d  config-motorola-capri.aarch64
+2f3ad9392d80a23d7ec4f28e5e4432331b9648e1d1f30e960bbc942c15076e1ba919093ebf549964d51f3aecea815717362b1bd801aa0d03d8d8e21368472e5a  0001-sm6115-mdss-ahb-clock.patch
+c246f43e2a0dc30a522623bca70fa934d41ae388473b59fe1672debf4711be3121a733a914c226a2f425c95ba87f236e696ab01970f0c2924597876c7127694d  0002-capri-brightness-lpm.patch
+"

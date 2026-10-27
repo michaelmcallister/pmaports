@@ -1,0 +1,16 @@
+[Unit]
+Description=Restore Moto G10 sensors after sleep
+DefaultDependencies=no
+Before=sleep.target
+StopWhenUnneeded=yes
+
+[Service]
+# hexagonrpcd conflicts with suspend.target, which also stops its sensor proxy.
+# Queue their restart after sleep.target is released on resume.
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/true
+ExecStop=/usr/bin/systemctl --no-block start iio-sensor-proxy.service
+
+[Install]
+WantedBy=sleep.target

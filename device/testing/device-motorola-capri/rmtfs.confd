@@ -1,0 +1,4 @@
+# The modem is started by capri-hardware after both firmware services are up.
+# Read this phone's EFS partitions, with writes kept in memory.
+command_args="-r -P"
+rc_need="localmount"

@@ -1,0 +1,33 @@
+maintainer="Michael McAllister <me@michaelmcallister.org>"
+pkgname=firmware-motorola-capri
+pkgver=1
+pkgrel=1
+pkgdesc="Firmware locations for Motorola Moto G10"
+url="https://nura.eco"
+arch="aarch64"
+license="MIT"
+options="!check !strip !archcheck !tracedeps pmb:cross-native" # Firmware path aliases only
+# The firmware binaries come from linux-firmware and preserved Android partitions.
+depends="
+	firmware-qcom-adreno-a630-sqe
+	linux-firmware-ath10k
+	linux-firmware-qca
+	make-dynpart-mappings>=10.2.4-r2
+	msm-firmware-loader>=1.9.0-r1
+"
+# Select the WCN3950 capability descriptor supplied by linux-firmware.
+replaces="linux-firmware-ath10k"
+
+package() {
+	local fwdir="$pkgdir/usr/lib/firmware"
+	local runtime=/run/msm-firmware-loader/target
+	mkdir -p "$fwdir/novatek" "$fwdir/qcom/motorola" \
+		"$fwdir/ath10k/WCN3990/hw1.0"
+	ln -s "$runtime/djn_novatek_ts_fw.bin" "$fwdir/novatek/capri-djn-nt36525b.bin"
+	ln -s "$runtime" "$fwdir/qcom/motorola/capri"
+	ln -s "$runtime/bdwlan_capri_ipa.bin" "$fwdir/ath10k/WCN3990/hw1.0/board.bin"
+	ln -s qcm2290/firmware-5.bin.zst "$fwdir/ath10k/WCN3990/hw1.0/firmware-5.bin.zst"
+}
+
+sha512sums="
+"

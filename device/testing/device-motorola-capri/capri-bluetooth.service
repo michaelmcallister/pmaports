@@ -1,0 +1,13 @@
+[Unit]
+Description=Initialize Motorola Moto G10 Bluetooth controller
+Requires=capri-hardware.service
+After=capri-hardware.service systemd-rfkill.service
+Before=bluetooth.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/capri-bluetooth
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

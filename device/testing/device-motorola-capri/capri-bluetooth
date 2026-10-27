@@ -1,0 +1,50 @@
+#!/usr/bin/python3
+"""Start Capri WCN3950 after the shared Wi-Fi power consumer is ready."""
+import os
+from pathlib import Path
+import re
+import subprocess
+import time
+
+assert os.geteuid() == 0
+assert b'motorola,capri' in Path('/proc/device-tree/compatible').read_bytes()
+
+def run(*args, timeout=10):
+    return subprocess.check_output(args, stderr=subprocess.STDOUT,
+                                   text=True, timeout=timeout)
+
+nodes = list(Path('/sys/firmware/devicetree/base').glob('**/bluetooth/compatible'))
+assert any(b'qcom,wcn3950-bt' in p.read_bytes() for p in nodes)
+args = Path('/proc/device-tree/chosen/bootargs').read_bytes().decode().strip('\0')
+match = re.search(r'(?:^| )androidboot.btmacaddr=([0-9a-fA-F:]{17})(?: |$)', args)
+assert match, 'Factory Bluetooth identity missing from bootloader arguments'
+address = match[1].upper()
+assert address not in ('00:00:00:00:00:00', 'FF:FF:FF:FF:FF:FF')
+
+# A working modem and registered WLAN consumer retain the shared supply refs.
+# Association with an access point is not required for Bluetooth to start.
+for attempt in range(30):
+    modem_ready = any((p/'name').read_text().strip() == 'modem' and
+                      (p/'state').read_text().strip() == 'running'
+                      for p in Path('/sys/class/remoteproc').glob('remoteproc*'))
+    if modem_ready and Path('/sys/class/net/wlan0/phy80211').exists():
+        break
+    time.sleep(1)
+else:
+    raise RuntimeError('Shared modem/WLAN power consumer did not become ready')
+
+run('modprobe', 'hci_uart')
+for attempt in range(40):
+    info = run('btmgmt', 'info')
+    if f'addr {address} ' in info:
+        break
+    if Path('/sys/class/bluetooth/hci0').exists():
+        config = run('btmgmt', '--index', '0', 'config')
+        if 'missing options: public-address' in config:
+            response = run('btmgmt', '--index', '0', 'public-addr', address)
+            assert 'Set Public Address complete' in response, response
+    time.sleep(.5)
+else:
+    raise RuntimeError('WCN3950 setup/factory address configuration timed out')
+
+print('Capri WCN3950 ready with its factory Bluetooth address')

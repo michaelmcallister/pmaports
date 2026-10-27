@@ -1,0 +1,25 @@
+From: Michael McAllister <me@michaelmcallister.org>
+Subject: [PATCH] drm/panel: capri: write brightness in low-power mode
+
+Use the panel's low-power command mode for brightness updates. Switching
+to high-speed mode leaves the panel dim after suspend despite the cached
+backlight value being restored.
+
+diff --git a/drivers/gpu/drm/panel/panel-motorola-capri-djn.c b/drivers/gpu/drm/panel/panel-motorola-capri-djn.c
+index 5972a4cc2..cc4a6d4b0 100644
+--- a/drivers/gpu/drm/panel/panel-motorola-capri-djn.c
++++ b/drivers/gpu/drm/panel/panel-motorola-capri-djn.c
+@@ -135,12 +135,9 @@ static int capri_bl_update(struct backlight_device *bl)
+ 	int ret = 0;
+ 
+ 	mutex_lock(&p->lock);
+-	if (p->ready) {
+-		p->dsi->mode_flags &= ~MIPI_DSI_MODE_LPM;
++	if (p->ready)
+ 		ret = mipi_dsi_dcs_set_display_brightness_large(p->dsi,
+ 						backlight_get_brightness(bl));
+-		p->dsi->mode_flags |= MIPI_DSI_MODE_LPM;
+-	}
+ 	mutex_unlock(&p->lock);
+ 	return ret;
+ }

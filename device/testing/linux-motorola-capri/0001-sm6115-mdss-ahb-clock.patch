@@ -1,0 +1,48 @@
+From: Michael McAllister <me@michaelmcallister.org>
+Subject: [PATCH] arm64: dts: qcom: sm6115: keep the MDSS AHB clock available
+
+MDSS needs the DISPCC AHB clock before its DPU child resumes. Include it
+in the MDSS clocks and binding to avoid garbled compressed scanout after
+display power cycling.
+
+diff --git a/Documentation/devicetree/bindings/display/msm/qcom,sm6115-mdss.yaml b/Documentation/devicetree/bindings/display/msm/qcom,sm6115-mdss.yaml
+index 309de1953..d4fac93d9 100644
+--- a/Documentation/devicetree/bindings/display/msm/qcom,sm6115-mdss.yaml
++++ b/Documentation/devicetree/bindings/display/msm/qcom,sm6115-mdss.yaml
+@@ -21,10 +21,12 @@ properties:
+     const: qcom,sm6115-mdss
+ 
+   clocks:
++    minItems: 3
+     items:
+       - description: Display AHB clock from gcc
+       - description: Display AXI clock
+       - description: Display core clock
++      - description: Display AHB clock from dispcc
+ 
+   iommus:
+     maxItems: 2
+@@ -92,7 +94,8 @@ examples:
+         power-domains = <&dispcc MDSS_GDSC>;
+         clocks = <&gcc GCC_DISP_AHB_CLK>,
+                  <&gcc GCC_DISP_HF_AXI_CLK>,
+-                 <&dispcc DISP_CC_MDSS_MDP_CLK>;
++                 <&dispcc DISP_CC_MDSS_MDP_CLK>,
++                 <&dispcc DISP_CC_MDSS_AHB_CLK>;
+ 
+         interrupts = <GIC_SPI 186 IRQ_TYPE_LEVEL_HIGH>;
+         interrupt-controller;
+diff --git a/arch/arm64/boot/dts/qcom/sm6115.dtsi b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+index bd94eb87d..927373303 100644
+--- a/arch/arm64/boot/dts/qcom/sm6115.dtsi
++++ b/arch/arm64/boot/dts/qcom/sm6115.dtsi
+@@ -1862,7 +2041,8 @@ mdss: display-subsystem@5e00000 {
+ 
+ 			clocks = <&gcc GCC_DISP_AHB_CLK>,
+ 				 <&gcc GCC_DISP_HF_AXI_CLK>,
+-				 <&dispcc DISP_CC_MDSS_MDP_CLK>;
++				 <&dispcc DISP_CC_MDSS_MDP_CLK>,
++				 <&dispcc DISP_CC_MDSS_AHB_CLK>;
+ 
+ 			resets = <&dispcc DISP_CC_MDSS_CORE_BCR>;
+ 
